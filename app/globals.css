@@ -1,0 +1,171 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* Apple-inspired dark mode with deep blacks and subtle grays */
+  --background: oklch(0 0 0); /* Pure black like Apple */
+  --foreground: oklch(0.98 0 0); /* Near white */
+  --card: oklch(0.08 0 0); /* Very dark gray */
+  --card-foreground: oklch(0.98 0 0);
+  --popover: oklch(0.08 0 0);
+  --popover-foreground: oklch(0.98 0 0);
+  --primary: oklch(0.6 0.15 250); /* Apple blue #0071e3 */
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.12 0 0);
+  --secondary-foreground: oklch(0.98 0 0);
+  --muted: oklch(0.15 0 0);
+  --muted-foreground: oklch(0.55 0 0);
+  --accent: oklch(0.6 0.15 250);
+  --accent-foreground: oklch(1 0 0);
+  --destructive: oklch(0.55 0.2 25);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.18 0 0); /* Subtle borders */
+  --input: oklch(0.12 0 0);
+  --ring: oklch(0.6 0.15 250);
+  --chart-1: oklch(0.7 0 0);
+  --chart-2: oklch(0.6 0 0);
+  --chart-3: oklch(0.5 0 0);
+  --chart-4: oklch(0.4 0 0);
+  --chart-5: oklch(0.3 0 0);
+  --radius: 1rem; /* Apple-style rounded corners */
+  --sidebar: oklch(0.08 0 0);
+  --sidebar-foreground: oklch(0.98 0 0);
+  --sidebar-primary: oklch(0.6 0.15 250);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.12 0 0);
+  --sidebar-accent-foreground: oklch(0.98 0 0);
+  --sidebar-border: oklch(0.18 0 0);
+  --sidebar-ring: oklch(0.6 0.15 250);
+  /* Adding custom zinc-750 color for iOS-style card hover state */
+  --color-zinc-750: oklch(0.28 0 0);
+}
+
+@theme inline {
+  /* SF Pro-inspired typography using Inter */
+  --font-display: "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: "SF Mono", "Menlo", "Monaco", "Courier New", monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 0.25rem);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 0.25rem);
+  --radius-xl: calc(var(--radius) + 0.5rem);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    scrollbar-width: none;
+  }
+  *::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
+  body {
+    /* Removed bg-background to allow mesh gradient to show through */
+    @apply text-foreground font-sans antialiased;
+    /* Apple-style smooth scrolling */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Adding Apple-style staggered fade-in animations */
+  @keyframes apple-fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .apple-animate-in {
+    animation: apple-fade-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  .apple-animate-delay-1 {
+    animation-delay: 0.1s;
+    opacity: 0;
+  }
+
+  .apple-animate-delay-2 {
+    animation-delay: 0.2s;
+    opacity: 0;
+  }
+
+  .apple-animate-delay-3 {
+    animation-delay: 0.3s;
+    opacity: 0;
+  }
+
+  .apple-animate-delay-4 {
+    animation-delay: 0.4s;
+    opacity: 0;
+  }
+
+  @keyframes template-preview-auto-scroll {
+    0% {
+      transform: translateY(0);
+    }
+    48% {
+      transform: translateY(-26%);
+    }
+    52% {
+      transform: translateY(-26%);
+    }
+    100% {
+      transform: translateY(0);
+    }
+  }
+
+  .template-preview-auto-scroll {
+    animation: template-preview-auto-scroll 9s ease-in-out infinite;
+    will-change: transform;
+  }
+
+  /* Hide scrollbar for carousel while maintaining scroll functionality */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
