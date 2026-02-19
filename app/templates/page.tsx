@@ -1,5 +1,5 @@
-import { NewsletterPlatformUI } from "@/components/newsletter-platform-ui"
+import { TemplatesPageClient } from "./templatesPageClient"
 
 export default function TemplatesPage() {
-  return <NewsletterPlatformUI initialTab="templates" />
+  return <TemplatesPageClient />
 }

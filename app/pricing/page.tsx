@@ -1,5 +1,5 @@
-import { NewsletterPlatformUI } from "@/components/newsletter-platform-ui"
+import { PricingPageClient } from "./pricingPageClient"
 
 export default function PricingPage() {
-  return <NewsletterPlatformUI initialTab="pricing" />
+  return <PricingPageClient />
 }

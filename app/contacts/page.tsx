@@ -1,5 +1,5 @@
-import { NewsletterPlatformUI } from "@/components/newsletter-platform-ui"
+import { ContactsPageClient } from "./contactsPageClient"
 
 export default function ContactsPage() {
-  return <NewsletterPlatformUI initialTab="contacts" />
+  return <ContactsPageClient />
 }

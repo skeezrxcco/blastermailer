@@ -143,11 +143,11 @@
     0% {
       transform: translateY(0);
     }
-    48% {
-      transform: translateY(-26%);
+    42% {
+      transform: translateY(-12px);
     }
-    52% {
-      transform: translateY(-26%);
+    60% {
+      transform: translateY(-12px);
     }
     100% {
       transform: translateY(0);
@@ -155,7 +155,7 @@
   }
 
   .template-preview-auto-scroll {
-    animation: template-preview-auto-scroll 9s ease-in-out infinite;
+    animation: template-preview-auto-scroll 4.8s cubic-bezier(0.2, 0.55, 0.18, 0.98) infinite;
     will-change: transform;
   }
 

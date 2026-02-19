@@ -68,10 +68,11 @@ const CogIcon = forwardRef<CogIconHandle, CogIconProps>(
           transition={{ type: "spring", stiffness: 50, damping: 10 }}
           variants={{
             normal: {
-              rotate: 0,
+              scale: 1,
             },
             animate: {
-              rotate: 180,
+              scale: [1, 1.06, 1],
+              transition: { duration: 0.4, ease: "easeInOut" },
             },
           }}
           viewBox="0 0 24 24"

@@ -1,5 +1,5 @@
-import { NewsletterPlatformUI } from "@/components/newsletter-platform-ui"
+import { SettingsPageClient } from "./settingsPageClient"
 
 export default function SettingsPage() {
-  return <NewsletterPlatformUI initialTab="settings" />
+  return <SettingsPageClient />
 }

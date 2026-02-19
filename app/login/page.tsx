@@ -76,66 +76,90 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top_left,#1f2937_0%,#0b1120_45%,#030712_100%)] px-4 py-10">
-      <Card className="w-full max-w-md border-zinc-800/80 bg-zinc-950/85 text-zinc-100 shadow-[0_24px_70px_rgba(0,0,0,0.45)]">
-        <CardHeader>
-          <CardTitle className="text-2xl">Sign in</CardTitle>
-          <CardDescription>Access your campaign workspace.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <form className="space-y-3" onSubmit={signIn}>
-            <Input
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder="name@company.com"
-              required
-              className="h-11 border-zinc-700 bg-zinc-900 text-zinc-100"
-            />
-            <Input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="Password"
-              required
-              className="h-11 border-zinc-700 bg-zinc-900 text-zinc-100"
-            />
-            <Button type="submit" disabled={isLoading} className="h-11 w-full bg-sky-500 text-zinc-950 hover:bg-sky-400">
-              {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />} Sign in
-            </Button>
-          </form>
-
-          <div className="space-y-2">
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11 w-full border-zinc-700 bg-zinc-900 text-zinc-100 hover:bg-zinc-800"
-              onClick={() => signInWithSocial("google")}
-              disabled={socialLoading !== null}
-            >
-              {socialLoading === "google" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Chrome className="h-4 w-4" />} Continue with Google
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11 w-full border-zinc-700 bg-zinc-900 text-zinc-100 hover:bg-zinc-800"
-              onClick={() => signInWithSocial("github")}
-              disabled={socialLoading !== null}
-            >
-              {socialLoading === "github" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Github className="h-4 w-4" />} Continue with GitHub
-            </Button>
+    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_top,#1d4ed8_0%,#0f172a_40%,#020617_100%)] px-4 py-10">
+      <div className="pointer-events-none absolute -left-20 -top-24 h-72 w-72 rounded-full bg-sky-400/20 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-24 right-0 h-80 w-80 rounded-full bg-emerald-400/15 blur-3xl" />
+      <div className="grid w-full max-w-5xl overflow-hidden rounded-[32px] bg-zinc-950/70 shadow-[0_32px_90px_rgba(0,0,0,0.45)] md:grid-cols-2">
+        <section className="hidden flex-col justify-between bg-[radial-gradient(circle_at_top_left,#0f766e_0%,#0f172a_58%,#020617_100%)] p-8 md:flex">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-emerald-100/80">mailerblaster AI</p>
+            <h1 className="mt-4 text-3xl font-semibold text-zinc-100">Run campaigns faster with AI templates and automation.</h1>
+            <p className="mt-3 text-sm leading-relaxed text-zinc-300">
+              Generate polished restaurant newsletters, manage audiences, and ship in minutes from one workspace.
+            </p>
           </div>
+          <div className="space-y-2 text-sm text-zinc-300">
+            <p>• Social sign-in and email authentication</p>
+            <p>• Ready-to-send themed templates</p>
+            <p>• Campaign analytics and activity tracking</p>
+          </div>
+        </section>
+        <Card className="rounded-none border-0 bg-zinc-950/88 text-zinc-100 shadow-none">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-2xl">Sign in</CardTitle>
+            <CardDescription>Continue to your campaign workspace.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 w-full border-zinc-700 bg-zinc-900 text-zinc-100 hover:bg-zinc-800"
+                onClick={() => signInWithSocial("google")}
+                disabled={socialLoading !== null}
+              >
+                {socialLoading === "google" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Chrome className="h-4 w-4" />} Continue with Google
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 w-full border-zinc-700 bg-zinc-900 text-zinc-100 hover:bg-zinc-800"
+                onClick={() => signInWithSocial("github")}
+                disabled={socialLoading !== null}
+              >
+                {socialLoading === "github" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Github className="h-4 w-4" />} Continue with GitHub
+              </Button>
+            </div>
 
-          {error ? <p className="rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{error}</p> : null}
+            <div className="flex items-center gap-3 py-1">
+              <div className="h-px flex-1 bg-zinc-800" />
+              <span className="text-xs uppercase tracking-wide text-zinc-500">Or sign in with email</span>
+              <div className="h-px flex-1 bg-zinc-800" />
+            </div>
 
-          <p className="text-sm text-zinc-400">
-            No account yet?{" "}
-            <Link href="/signup" className="font-medium text-sky-300 hover:text-sky-200">
-              Create one
-            </Link>
-          </p>
-        </CardContent>
-      </Card>
+            <form className="space-y-3" onSubmit={signIn}>
+              <Input
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="name@company.com"
+                required
+                className="h-11 border-zinc-700 bg-zinc-900 text-zinc-100"
+              />
+              <Input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Password"
+                required
+                className="h-11 border-zinc-700 bg-zinc-900 text-zinc-100"
+              />
+              <Button type="submit" disabled={isLoading} className="h-11 w-full bg-sky-500 text-zinc-950 hover:bg-sky-400">
+                {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />} Sign in
+              </Button>
+            </form>
+
+            {error ? <p className="rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{error}</p> : null}
+
+            <p className="text-sm text-zinc-400">
+              No account yet?{" "}
+              <Link href="/signup" className="font-medium text-sky-300 hover:text-sky-200">
+                Create one
+              </Link>
+            </p>
+          </CardContent>
+        </Card>
+      </div>
     </main>
   )
 }

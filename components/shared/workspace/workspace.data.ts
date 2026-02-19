@@ -1,0 +1,66 @@
+import type { SidebarTab } from "@/hooks/use-workspace-tab"
+
+export type SettingsSection = "profile" | "plan" | "usage" | "referals"
+
+export type WorkspaceIconKey =
+  | "bot"
+  | "fileText"
+  | "users"
+  | "rocket"
+  | "circleCheck"
+  | "partyPopper"
+  | "handCoins"
+  | "idCard"
+
+export type WorkspaceNavSeed<TId extends string> = {
+  id: TId
+  label: string
+  icon: WorkspaceIconKey
+}
+
+export const sidebarItems: WorkspaceNavSeed<SidebarTab>[] = [
+  { id: "chat", label: "Chat", icon: "bot" },
+  { id: "templates", label: "Templates", icon: "fileText" },
+  { id: "contacts", label: "Contacts", icon: "users" },
+  { id: "activity", label: "Activity", icon: "rocket" },
+]
+
+export const settingsSidebarItems: WorkspaceNavSeed<SettingsSection | "pricing" | "checkout">[] = [
+  { id: "profile", label: "Profile", icon: "users" },
+  { id: "plan", label: "Plan", icon: "circleCheck" },
+  { id: "usage", label: "Usage", icon: "rocket" },
+  { id: "referals", label: "Referals", icon: "partyPopper" },
+  { id: "pricing", label: "Pricing", icon: "handCoins" },
+  { id: "checkout", label: "Checkout", icon: "idCard" },
+]
+
+export const pageTitleMap: Record<SidebarTab, string> = {
+  chat: "Chat",
+  templates: "Templates",
+  contacts: "Contacts",
+  activity: "Activity",
+  settings: "Settings",
+  pricing: "Pricing",
+  checkout: "Checkout",
+}
+
+export const workspaceStaticData = {
+  credits: 120,
+  maxCredits: 120,
+  expandedTitle: "mailerblaster AI",
+  settingsTitle: "Settings",
+  drawerNavigationTitle: "Navigation",
+  settingsDrawerDescription: "Manage account, plan, and billing.",
+  workspaceDrawerDescription: "Move through workspace pages.",
+  user: {
+    name: "Ricardo Pires",
+    email: "ricardo@example.com",
+    initials: "RP",
+    avatarUrl: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=128&q=80",
+  },
+}
+
+export function settingsSectionFromParam(value: string | null): SettingsSection {
+  if (value === "profile" || value === "plan" || value === "usage" || value === "referals") return value
+  return "profile"
+}

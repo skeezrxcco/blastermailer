@@ -1,5 +1,5 @@
-import { NewsletterPlatformUI } from "@/components/newsletter-platform-ui"
+import { ChatPageClient } from "./chatPageClient"
 
 export default function ChatPage() {
-  return <NewsletterPlatformUI initialTab="chat" />
+  return <ChatPageClient />
 }

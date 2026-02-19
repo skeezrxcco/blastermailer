@@ -1,5 +1,5 @@
-import { NewsletterPlatformUI } from "@/components/newsletter-platform-ui"
+import { CheckoutPageClient } from "./checkoutPageClient"
 
 export default function CheckoutPage() {
-  return <NewsletterPlatformUI initialTab="checkout" />
+  return <CheckoutPageClient />
 }
