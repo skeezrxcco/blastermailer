@@ -1,5 +1,11 @@
+import { Suspense } from "react"
+
 import { ChatPageClient } from "./chatPageClient"
 
 export default function ChatPage() {
-  return <ChatPageClient />
+  return (
+    <Suspense fallback={null}>
+      <ChatPageClient />
+    </Suspense>
+  )
 }
