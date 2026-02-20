@@ -19,8 +19,6 @@ services:
         condition: service_healthy
       nats:
         condition: service_started
-      ollama:
-        condition: service_started
     ports:
       - "3000:3000"
 
@@ -66,19 +64,7 @@ services:
     ports:
       - "8222:8222"
 
-  # Kept enabled by default so AI works even without paid model keys.
-  ollama:
-    image: ollama/ollama:latest
-    container_name: mailerblaster-ollama
-    restart: unless-stopped
-    logging: *default-logging
-    volumes:
-      - ollama_data:/root/.ollama
-    ports:
-      - "11434:11434"
-
 volumes:
   postgres_data:
   redis_data:
   nats_data:
-  ollama_data:
