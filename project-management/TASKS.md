@@ -46,11 +46,12 @@ Last updated: 2026-02-20
 ## 4) AI Chat Orchestration
 
 - [x] Add API-only multi-provider AI routing (OpenAI, Anthropic/Claude, DeepSeek, Grok/xAI, Llama API) with fallback
+- [x] Integrate chat UI with live AI generation API (`/api/ai/generate`)
 - [ ] Do not persist chat threads and messages on this DB only of the AI provider does not persist them (not only ephemeral)
 - [ ] Implement chat workflow state machine persistence and resume
 - [ ] Add bot typing streaming with token-by-token server events
 - [ ] Add model routing policies by plan/tier/cost budget
-- [ ] Add prompt templates and guardrails for newsletter generation
+- [x] Add prompt templates and guardrails for newsletter generation
 - [ ] Add moderation/safety checks for generated content
 - [ ] Add AI request telemetry (latency, cost, failures, model usage)
 
