@@ -3,8 +3,19 @@ import { getServerSession } from "next-auth"
 
 import { authOptions } from "@/lib/auth"
 import { generateAiText } from "@/lib/ai"
+import {
+  buildStageSystemPrompt,
+  createConversationId,
+  mergeSystemPrompts,
+  normalizeConversationId,
+  normalizeRequestedStage,
+  resolveOrchestrationStage,
+  sanitizePromptForAi,
+  type OrchestrationStage,
+} from "@/lib/ai-chat-orchestration"
 import { createJob } from "@/lib/jobs"
 import { createMessage } from "@/lib/messaging"
+import { prisma } from "@/lib/prisma"
 
 function statusForAiError(message: string): number {
   const normalized = message.toLowerCase()
@@ -29,6 +40,30 @@ function statusForAiError(message: string): number {
   return 500
 }
 
+function extractStageFromMetadata(metadata: unknown): OrchestrationStage | null {
+  if (!metadata || typeof metadata !== "object") return null
+  const stage = (metadata as Record<string, unknown>).stage
+  return normalizeRequestedStage(typeof stage === "string" ? stage : undefined)
+}
+
+async function getPreviousConversationStage(userId: string, conversationId: string) {
+  const message = await prisma.message.findFirst({
+    where: {
+      userId,
+      channel: "ai",
+      conversationId,
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+    select: {
+      metadata: true,
+    },
+  })
+
+  return extractStageFromMetadata(message?.metadata)
+}
+
 export async function POST(request: Request) {
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) {
@@ -40,13 +75,26 @@ export async function POST(request: Request) {
     system?: string
     model?: string
     provider?: string
+    conversationId?: string
+    stage?: string
     async?: boolean
   }
 
-  const prompt = String(body.prompt ?? "").trim()
-  if (!prompt) {
+  const prompt = sanitizePromptForAi(String(body.prompt ?? ""))
+  if (!prompt.trim()) {
     return NextResponse.json({ error: "Prompt is required" }, { status: 422 })
   }
+
+  const conversationId = normalizeConversationId(body.conversationId) ?? createConversationId()
+  const requestedStage = normalizeRequestedStage(body.stage)
+  const previousStage = await getPreviousConversationStage(session.user.id, conversationId)
+  const stage = resolveOrchestrationStage({
+    requestedStage,
+    previousStage,
+    prompt,
+  })
+  const stageSystemPrompt = buildStageSystemPrompt(stage)
+  const systemPrompt = mergeSystemPrompts(stageSystemPrompt, body.system)
 
   if (body.async) {
     const job = await createJob({
@@ -54,31 +102,37 @@ export async function POST(request: Request) {
       type: "ai_generate",
       payload: {
         prompt,
-        system: body.system,
+        system: systemPrompt,
         model: body.model,
         provider: body.provider,
+        conversationId,
+        stage,
         userPlan: session.user.plan,
       },
     })
 
-    return NextResponse.json({ job }, { status: 202 })
+    return NextResponse.json({ job, conversationId, stage }, { status: 202 })
   }
 
   try {
+    const startedAt = Date.now()
     const result = await generateAiText({
       prompt,
-      system: body.system,
+      system: systemPrompt,
       model: body.model,
       provider: body.provider,
       userId: session.user.id,
       userPlan: session.user.plan,
     })
+    const latencyMs = Date.now() - startedAt
 
     await createMessage({
       userId: session.user.id,
       role: "USER",
       content: prompt,
       channel: "ai",
+      conversationId,
+      metadata: { stage },
     })
 
     const assistantMessage = await createMessage({
@@ -86,13 +140,21 @@ export async function POST(request: Request) {
       role: "ASSISTANT",
       content: result.text,
       channel: "ai",
-      metadata: { model: result.model, provider: result.provider },
+      conversationId,
+      metadata: {
+        model: result.model,
+        provider: result.provider,
+        stage,
+        latencyMs,
+      },
     })
 
     return NextResponse.json({
       text: result.text,
       model: result.model,
       provider: result.provider,
+      conversationId,
+      stage,
       message: assistantMessage,
     })
   } catch (error) {
