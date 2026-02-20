@@ -194,6 +194,17 @@ jobs:
             exit 0
           "
 
+      - name: Prune unused Docker resources on VPS
+        run: |
+          ssh "$VPS_USER@$VPS_HOST" "
+            set -e
+            docker container prune -f
+            docker image prune -af
+            docker volume prune -f
+            docker network prune -f
+            docker builder prune -af
+          "
+
       - name: Deployment summary
         run: |
           {
