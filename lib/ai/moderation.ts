@@ -18,6 +18,21 @@ const EMAIL_SCOPE_HINTS = [
   "cta",
 ]
 
+const GREETING_HINTS = [
+  "hi",
+  "hello",
+  "hey",
+  "yo",
+  "good morning",
+  "good afternoon",
+  "good evening",
+  "ola",
+  "olá",
+  "bom dia",
+  "boa tarde",
+  "boa noite",
+]
+
 const SAFETY_SENSITIVE_HINTS = [
   "phishing",
   "steal password",
@@ -44,6 +59,13 @@ function isUnsafePrompt(prompt: string) {
   return SAFETY_SENSITIVE_HINTS.some((hint) => candidate.includes(hint))
 }
 
+function isGreetingPrompt(prompt: string) {
+  const candidate = normalize(prompt)
+  if (!candidate) return false
+  if (candidate.length <= 16 && GREETING_HINTS.includes(candidate)) return true
+  return GREETING_HINTS.some((hint) => candidate === hint || candidate.startsWith(`${hint} `))
+}
+
 export function moderatePrompt(rawPrompt: string): ModerationResult {
   const prompt = rawPrompt.replace(/\u0000/g, "").trim().slice(0, 6000)
   if (!prompt) {
@@ -63,11 +85,19 @@ export function moderatePrompt(rawPrompt: string): ModerationResult {
     }
   }
 
+  if (isGreetingPrompt(prompt)) {
+    return {
+      action: "allow",
+      sanitizedPrompt: prompt,
+      message: "Greeting detected.",
+    }
+  }
+
   if (!isEmailScopePrompt(prompt)) {
     return {
       action: "rewrite_scope",
-      sanitizedPrompt: `Convert this request into an actionable email task and ask one clarifying question before drafting content: ${prompt}`,
-      message: "This assistant is email-only. I reframed your request into an email workflow.",
+      sanitizedPrompt: `Keep this conversation focused on email workflows. Ask a short clarifying question about campaign type and goal before drafting.`,
+      message: "Redirected to email scope.",
     }
   }
 
@@ -77,4 +107,3 @@ export function moderatePrompt(rawPrompt: string): ModerationResult {
     message: "Prompt accepted.",
   }
 }
-

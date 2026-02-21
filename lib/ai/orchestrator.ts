@@ -107,6 +107,28 @@ function inferFallbackDecision(state: WorkflowMachineState, prompt: string): Pla
   }
 }
 
+function looksLikeGreetingOrShortIntent(prompt: string) {
+  const normalized = prompt.trim().toLowerCase()
+  if (!normalized) return true
+  const greetings = new Set([
+    "hi",
+    "hello",
+    "hey",
+    "yo",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "ola",
+    "olá",
+    "bom dia",
+    "boa tarde",
+    "boa noite",
+  ])
+  if (greetings.has(normalized)) return true
+  if (normalized.length <= 24 && !normalized.includes("email") && !normalized.includes("campaign")) return true
+  return false
+}
+
 function buildPlannerPrompt(state: WorkflowMachineState, prompt: string) {
   const context = {
     state: state.state,
@@ -119,7 +141,7 @@ function buildPlannerPrompt(state: WorkflowMachineState, prompt: string) {
   return [
     "Select exactly one tool and respond with strict JSON only.",
     'Schema: {"tool":"ask_campaign_type|suggest_templates|select_template|request_recipients|validate_recipients|review_campaign|confirm_queue_campaign|compose_simple_email|compose_signature_email","args":{},"state":"INTENT_CAPTURE|GOAL_BRIEF|TEMPLATE_DISCOVERY|TEMPLATE_SELECTED|CONTENT_REFINE|AUDIENCE_COLLECTION|VALIDATION_REVIEW|SEND_CONFIRMATION|QUEUED|COMPLETED","intent":"UNKNOWN|NEWSLETTER|SIMPLE_EMAIL|SIGNATURE","response":"short assistant response"}',
-    "Rules: keep users on email workflows only. Newsletter path should prioritize template discovery and recipients before send.",
+    "Rules: keep users on email workflows only. Newsletter path should prioritize template discovery and recipients before send. Be conversational and concise. Do not output full formal email templates unless user explicitly asks for drafting.",
     `Current workflow: ${JSON.stringify(context)}`,
     `User input: ${prompt}`,
   ].join("\n")
@@ -244,7 +266,7 @@ export async function* orchestrateAiChatStream(input: OrchestratorInput): AsyncG
     resumed: workflowSession.resumed,
   }
 
-  if (moderation.action !== "allow") {
+  if (moderation.action === "rewrite_safety") {
     yield {
       type: "moderation",
       action: moderation.action,
@@ -269,6 +291,16 @@ export async function* orchestrateAiChatStream(input: OrchestratorInput): AsyncG
     decision = plannerOutput.decision
   } catch {
     decision = inferFallbackDecision(workflowSession.state, moderation.sanitizedPrompt)
+  }
+
+  if (workflowSession.state.state === "INTENT_CAPTURE" && looksLikeGreetingOrShortIntent(moderation.sanitizedPrompt)) {
+    decision = {
+      tool: "ask_campaign_type",
+      state: "GOAL_BRIEF",
+      intent: workflowSession.state.intent === "UNKNOWN" ? "UNKNOWN" : workflowSession.state.intent,
+      response:
+        "Great to see you. What are you trying to send today: newsletter, promotion, product update, or a one-off email?",
+    }
   }
 
   const tool = normalizeTool(decision.tool)
@@ -322,7 +354,11 @@ export async function* orchestrateAiChatStream(input: OrchestratorInput): AsyncG
     recipientStats: persisted.state.recipientStats,
   }
 
-  const shouldUseToolTextOnly = tool === "suggest_templates" || tool === "request_recipients" || tool === "confirm_queue_campaign"
+  const shouldUseToolTextOnly =
+    tool === "ask_campaign_type" ||
+    tool === "suggest_templates" ||
+    tool === "request_recipients" ||
+    tool === "confirm_queue_campaign"
 
   let responseResult: GenerateAiTextResult | null = null
   let finalText = decision.response?.trim() || ""

@@ -68,7 +68,7 @@ export function executeTool(input: ToolExecutionInput): ToolResultPayload {
 
   if (tool === "ask_campaign_type") {
     return {
-      text: "What type of email campaign are you planning: newsletter, product update, promotion, or a simple one-off email?",
+      text: "Great, let’s do this. What are you trying to send: newsletter, promotion, product update, or a one-off email?",
     }
   }
 
@@ -131,12 +131,11 @@ export function executeTool(input: ToolExecutionInput): ToolResultPayload {
 
   if (tool === "compose_signature_email") {
     return {
-      text: "I will draft a concise professional signature email with clear sender signature fields.",
+      text: "Perfect. I can draft a clean signature email. Share tone and who it should be sent to.",
     }
   }
 
   return {
-    text: "I will draft a professional email now and keep it aligned with your campaign objective.",
+    text: "Nice. I can draft this with you. Share the goal, audience, and CTA you want.",
   }
 }
-
