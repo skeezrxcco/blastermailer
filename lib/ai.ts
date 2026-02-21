@@ -8,25 +8,71 @@ export type GenerateAiTextInput = {
   userPlan?: string
 }
 
+export type GenerateAiProviderAttempt = {
+  provider: string
+  model: string
+  status: "SUCCESS" | "ERROR"
+  latencyMs?: number | null
+  tokenIn?: number | null
+  tokenOut?: number | null
+  estimatedCostUsd?: number | null
+  errorCode?: string | null
+}
+
 export type GenerateAiTextResult = {
   text: string
   model: string
   provider: string
+  latencyMs?: number | null
+  tokenIn?: number | null
+  tokenOut?: number | null
+  estimatedCostUsd?: number | null
+  attempts?: GenerateAiProviderAttempt[]
 }
 
 import { prisma } from "@/lib/prisma"
+import { filterAllowedProviders, resolveProviderPolicy, type AiProviderName as PolicyProviderName } from "@/lib/ai/policy"
 
-type AiProviderName = "openai" | "anthropic" | "deepseek" | "grok" | "llama"
+export type GenerateAiTextStreamChunk =
+  | {
+      type: "token"
+      token: string
+    }
+  | {
+      type: "done"
+      text: string
+      model: string
+      provider: string
+      attempts: GenerateAiProviderAttempt[]
+    }
+
+type AiProviderName = "openai" | "anthropic" | "deepseek" | "grok" | "llama" | "openrouter"
 type AiProviderPreference = "auto" | AiProviderName
 
 type ProviderConfig = {
   provider: AiProviderName
-  apiKey: string
+  apiKey?: string
   model: string
   baseUrl?: string
+  headers?: Record<string, string>
 }
 
-const DEFAULT_PRIORITY: AiProviderName[] = ["deepseek", "llama", "openai", "anthropic", "grok"]
+type ProviderSelectionFallback = {
+  fallbackText: string
+}
+
+type ProviderSelectionActive = {
+  fallbackText: null
+  providers: ProviderConfig[]
+  providerByName: Map<AiProviderName, ProviderConfig>
+  attemptOrder: AiProviderName[]
+  onboardingPool: boolean
+  caps: Record<AiProviderName, number>
+  day: string
+  perUserLimit: number
+}
+
+const DEFAULT_PRIORITY: AiProviderName[] = ["deepseek", "llama", "openrouter", "openai", "anthropic", "grok"]
 const ONBOARDING_FREE_PLANS = new Set(["starter", "free", "trial"])
 const DEFAULT_FREE_DAILY_PER_USER = 20
 const DEFAULT_FREE_WEIGHTS: Record<AiProviderName, number> = {
@@ -35,6 +81,7 @@ const DEFAULT_FREE_WEIGHTS: Record<AiProviderName, number> = {
   deepseek: 1.3,
   grok: 0.65,
   llama: 1.15,
+  openrouter: 1.25,
 }
 
 function emptyUsageCounters(): Record<AiProviderName, number> {
@@ -44,6 +91,7 @@ function emptyUsageCounters(): Record<AiProviderName, number> {
     deepseek: 0,
     grok: 0,
     llama: 0,
+    openrouter: 0,
   }
 }
 
@@ -65,6 +113,9 @@ function asProviderName(value?: string | null): AiProviderName | null {
   }
   if (normalized === "llama" || normalized === "meta" || normalized === "meta-llama") {
     return "llama"
+  }
+  if (normalized === "openrouter" || normalized === "router") {
+    return "openrouter"
   }
   return null
 }
@@ -98,6 +149,36 @@ function parsePositiveFloat(value: string | undefined): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
 }
 
+function estimateTokens(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return 0
+  return Math.ceil(trimmed.length / 4)
+}
+
+function estimateCostUsd(provider: AiProviderName, tokenIn: number, tokenOut: number) {
+  const ratesPerThousand: Record<AiProviderName, { in: number; out: number }> = {
+    openai: { in: 0.0004, out: 0.0016 },
+    anthropic: { in: 0.00025, out: 0.00125 },
+    deepseek: { in: 0.00014, out: 0.00028 },
+    grok: { in: 0.0007, out: 0.0015 },
+    llama: { in: 0.0001, out: 0.0001 },
+    openrouter: { in: 0.0001, out: 0.00015 },
+  }
+
+  const pricing = ratesPerThousand[provider]
+  const cost = (tokenIn / 1000) * pricing.in + (tokenOut / 1000) * pricing.out
+  return Number.isFinite(cost) ? Number(cost.toFixed(6)) : null
+}
+
+function normalizeErrorCode(message: string) {
+  const normalized = message.toLowerCase()
+  if (normalized.includes("429") || normalized.includes("rate")) return "RATE_LIMIT"
+  if (normalized.includes("quota")) return "QUOTA"
+  if (normalized.includes("401") || normalized.includes("403")) return "AUTH"
+  if (normalized.includes("timeout")) return "TIMEOUT"
+  return "UNKNOWN"
+}
+
 function getDailyCaps(): Record<AiProviderName, number> {
   return {
     openai: parsePositiveInt(process.env.AI_FREE_DAILY_OPENAI),
@@ -105,6 +186,7 @@ function getDailyCaps(): Record<AiProviderName, number> {
     deepseek: parsePositiveInt(process.env.AI_FREE_DAILY_DEEPSEEK),
     grok: parsePositiveInt(process.env.AI_FREE_DAILY_GROK),
     llama: parsePositiveInt(process.env.AI_FREE_DAILY_LLAMA),
+    openrouter: parsePositiveInt(process.env.AI_FREE_DAILY_OPENROUTER),
   }
 }
 
@@ -119,6 +201,7 @@ function getFreeWeights(): Record<AiProviderName, number> {
     deepseek: parsePositiveFloat(process.env.AI_FREE_WEIGHT_DEEPSEEK) || DEFAULT_FREE_WEIGHTS.deepseek,
     grok: parsePositiveFloat(process.env.AI_FREE_WEIGHT_GROK) || DEFAULT_FREE_WEIGHTS.grok,
     llama: parsePositiveFloat(process.env.AI_FREE_WEIGHT_LLAMA) || DEFAULT_FREE_WEIGHTS.llama,
+    openrouter: parsePositiveFloat(process.env.AI_FREE_WEIGHT_OPENROUTER) || DEFAULT_FREE_WEIGHTS.openrouter,
   }
 }
 
@@ -154,6 +237,16 @@ function shouldUseOnboardingPool(userPlan?: string): boolean {
 
   if (!plan) return true
   return planPool.has(plan)
+}
+
+function isLikelyLocalBaseUrl(url: string) {
+  try {
+    const parsed = new URL(url)
+    const host = parsed.hostname.toLowerCase()
+    return host === "localhost" || host === "127.0.0.1" || host === "host.docker.internal" || host === "ollama"
+  } catch {
+    return false
+  }
 }
 
 function buildProviderConfigs(): ProviderConfig[] {
@@ -195,12 +288,33 @@ function buildProviderConfigs(): ProviderConfig[] {
     })
   }
 
-  if (process.env.LLAMA_API_KEY) {
+  const llamaBaseUrl = (process.env.LLAMA_BASE_URL ?? "https://api.llama.com/compat/v1").replace(/\/$/, "")
+  const llamaApiKey = String(process.env.LLAMA_API_KEY ?? "").trim()
+  const llamaAllowNoKey = (process.env.LLAMA_ALLOW_NO_KEY ?? "").trim().toLowerCase()
+  const canUseKeylessLlama = (llamaAllowNoKey === "true" || llamaAllowNoKey === "1" || llamaAllowNoKey === "yes") && isLikelyLocalBaseUrl(llamaBaseUrl)
+
+  if (llamaApiKey || canUseKeylessLlama) {
     providers.push({
       provider: "llama",
-      apiKey: process.env.LLAMA_API_KEY,
+      apiKey: llamaApiKey || undefined,
       model: process.env.LLAMA_MODEL ?? "Llama-3.3-70B-Instruct",
-      baseUrl: (process.env.LLAMA_BASE_URL ?? "https://api.llama.com/compat/v1").replace(/\/$/, ""),
+      baseUrl: llamaBaseUrl,
+    })
+  }
+
+  if (process.env.OPENROUTER_API_KEY) {
+    const headers: Record<string, string> = {}
+    const referer = String(process.env.OPENROUTER_HTTP_REFERER ?? "").trim()
+    const title = String(process.env.OPENROUTER_X_TITLE ?? "").trim()
+    if (referer) headers["HTTP-Referer"] = referer
+    if (title) headers["X-Title"] = title
+
+    providers.push({
+      provider: "openrouter",
+      apiKey: process.env.OPENROUTER_API_KEY,
+      model: process.env.OPENROUTER_MODEL ?? "meta-llama/llama-3.3-70b-instruct:free",
+      baseUrl: (process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1").replace(/\/$/, ""),
+      headers,
     })
   }
 
@@ -338,6 +452,7 @@ function buildAttemptOrder(
   available: ProviderConfig[],
   input: GenerateAiTextInput,
   selectedOnboardingProvider: AiProviderName | null,
+  policyOrder?: AiProviderName[],
   allowedProviders?: Set<AiProviderName>,
 ): AiProviderName[] {
   const availableNames = new Set(available.map((provider) => provider.provider))
@@ -356,6 +471,10 @@ function buildAttemptOrder(
   if (preferredProvider !== "auto") push(preferredProvider)
 
   push(selectedOnboardingProvider)
+
+  for (const provider of policyOrder ?? []) {
+    push(provider)
+  }
 
   const strict = (process.env.AI_PROVIDER_STRICT ?? "").trim().toLowerCase()
   if (preferredProvider !== "auto" && (strict === "true" || strict === "1")) {
@@ -381,7 +500,8 @@ async function generateWithOpenAiCompatible(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
+      ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+      ...(config.headers ?? {}),
     },
     body: JSON.stringify({
       model: input.model ?? config.model,
@@ -431,8 +551,8 @@ async function generateWithAnthropic(config: ProviderConfig, input: GenerateAiTe
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": config.apiKey,
       "anthropic-version": "2023-06-01",
+      ...(config.apiKey ? { "x-api-key": config.apiKey } : {}),
     },
     body: JSON.stringify({
       model: input.model ?? config.model,
@@ -470,20 +590,282 @@ async function generateWithAnthropic(config: ProviderConfig, input: GenerateAiTe
   }
 }
 
-export async function generateAiText(input: GenerateAiTextInput): Promise<GenerateAiTextResult> {
-  const providers = buildProviderConfigs()
-  if (providers.length === 0) {
-    throw new Error(
-      "No AI provider API key configured. Set one of: OPENAI_API_KEY, ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, GROK_API_KEY, LLAMA_API_KEY.",
-    )
+async function* generateWithOpenAiCompatibleStream(config: ProviderConfig, input: GenerateAiTextInput) {
+  const response = await fetch(`${config.baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+      ...(config.headers ?? {}),
+    },
+    body: JSON.stringify({
+      model: input.model ?? config.model,
+      temperature: input.temperature ?? 0.4,
+      stream: true,
+      messages: [
+        ...(input.system ? [{ role: "system", content: input.system }] : []),
+        { role: "user", content: input.prompt },
+      ],
+    }),
+  })
+
+  if (!response.ok || !response.body) {
+    const errorText = await response.text().catch(() => "")
+    throw new Error(`${config.provider} stream error (${response.status}): ${errorText}`)
   }
 
-  const providerByName = new Map(providers.map((provider) => [provider.provider, provider] as const))
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ""
+
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split("\n")
+    buffer = lines.pop() ?? ""
+
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed || !trimmed.startsWith("data:")) continue
+      const data = trimmed.slice(5).trim()
+      if (!data || data === "[DONE]") continue
+
+      let payload: {
+        choices?: Array<{ delta?: { content?: string } }>
+      } | null = null
+      try {
+        payload = JSON.parse(data)
+      } catch {
+        payload = null
+      }
+      const token = payload?.choices?.[0]?.delta?.content
+      if (token) {
+        yield token
+      }
+    }
+  }
+}
+
+async function* generateWithAnthropicStream(config: ProviderConfig, input: GenerateAiTextInput) {
+  const response = await fetch(`${config.baseUrl}/messages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "anthropic-version": "2023-06-01",
+      ...(config.apiKey ? { "x-api-key": config.apiKey } : {}),
+    },
+    body: JSON.stringify({
+      model: input.model ?? config.model,
+      max_tokens: parsePositiveInt(process.env.ANTHROPIC_MAX_TOKENS) || 1024,
+      temperature: input.temperature ?? 0.4,
+      stream: true,
+      system: input.system,
+      messages: [{ role: "user", content: input.prompt }],
+    }),
+  })
+
+  if (!response.ok || !response.body) {
+    const errorText = await response.text().catch(() => "")
+    throw new Error(`anthropic stream error (${response.status}): ${errorText}`)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ""
+
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split("\n")
+    buffer = lines.pop() ?? ""
+
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed || !trimmed.startsWith("data:")) continue
+      const data = trimmed.slice(5).trim()
+      if (!data || data === "[DONE]") continue
+
+      try {
+        const payload = JSON.parse(data) as {
+          type?: string
+          delta?: { text?: string }
+        }
+        if (payload.type === "content_block_delta" && payload.delta?.text) {
+          yield payload.delta.text
+        }
+      } catch {
+        // Ignore malformed streaming chunks.
+      }
+    }
+  }
+}
+
+function buildLocalFallbackText(input: GenerateAiTextInput) {
+  const prompt = input.prompt.trim()
+  const normalized = prompt.toLowerCase()
+
+  if (!prompt) {
+    return "Tell me your campaign goal, audience, tone, and CTA. I will generate four professional newsletter directions."
+  }
+
+  if (normalized === "hi" || normalized === "hello" || normalized.startsWith("hello ")) {
+    return "Ready. Share your campaign goal and target audience, and I will draft four professional template directions."
+  }
+
+  if (normalized.includes("email") || normalized.includes("audience") || normalized.includes("csv")) {
+    return "Great. Next step: provide recipients (paste emails or upload CSV with an `email` header). I will validate and deduplicate before sending."
+  }
+
+  if (normalized.includes("template") || normalized.includes("design")) {
+    return "Understood. I can generate four template concepts tailored to your goal, each with tone, layout direction, and CTA hierarchy."
+  }
+
+  return [
+    "I can help you build this campaign now.",
+    "Please confirm these inputs so I can generate final-ready content:",
+    "1) Campaign objective",
+    "2) Audience segment",
+    "3) Tone and primary CTA",
+    "Then I will return four professional newsletter directions plus recommended next steps.",
+  ].join("\n")
+}
+
+export async function generateAiText(input: GenerateAiTextInput): Promise<GenerateAiTextResult> {
+  const providerSelection = await selectProvidersForInput(input)
+  if (providerSelection.fallbackText !== null) {
+    return {
+      text: providerSelection.fallbackText,
+      model: "blastermailer-local-fallback-v1",
+      provider: "fallback",
+      latencyMs: 0,
+      tokenIn: estimateTokens(input.prompt + (input.system ?? "")),
+      tokenOut: estimateTokens(providerSelection.fallbackText),
+      estimatedCostUsd: 0,
+      attempts: [
+        {
+          provider: "fallback",
+          model: "blastermailer-local-fallback-v1",
+          status: "SUCCESS",
+          latencyMs: 0,
+          tokenIn: estimateTokens(input.prompt + (input.system ?? "")),
+          tokenOut: estimateTokens(providerSelection.fallbackText),
+          estimatedCostUsd: 0,
+          errorCode: null,
+        },
+      ],
+    }
+  }
+
+  const activeSelection = providerSelection as ProviderSelectionActive
+  const { providerByName, attemptOrder, onboardingPool, caps, day, perUserLimit } = activeSelection
+  const attemptTelemetry: GenerateAiProviderAttempt[] = []
+  const errors: string[] = []
+
+  for (const providerName of attemptOrder) {
+    const config = providerByName.get(providerName)
+    if (!config) continue
+
+    const startedAt = Date.now()
+    try {
+      let result: GenerateAiTextResult
+      if (config.provider === "anthropic") {
+        result = await generateWithAnthropic(config, input)
+      } else {
+        result = await generateWithOpenAiCompatible(config, input)
+      }
+
+      const latencyMs = Date.now() - startedAt
+      const tokenIn = estimateTokens(input.prompt + (input.system ?? ""))
+      const tokenOut = estimateTokens(result.text)
+      const estimatedCost = estimateCostUsd(config.provider, tokenIn, tokenOut)
+
+      attemptTelemetry.push({
+        provider: config.provider,
+        model: result.model,
+        status: "SUCCESS",
+        latencyMs,
+        tokenIn,
+        tokenOut,
+        estimatedCostUsd: estimatedCost,
+        errorCode: null,
+      })
+
+      if (onboardingPool) {
+        if (caps[config.provider] > 0) {
+          await bumpDailyUsage(day, config.provider)
+        }
+        if (perUserLimit > 0 && input.userId) {
+          await bumpUserDailyUsage(day, input.userId)
+        }
+      }
+
+      return {
+        ...result,
+        latencyMs,
+        tokenIn,
+        tokenOut,
+        estimatedCostUsd: estimatedCost,
+        attempts: attemptTelemetry,
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown provider error"
+      const latencyMs = Date.now() - startedAt
+      attemptTelemetry.push({
+        provider: config.provider,
+        model: input.model ?? config.model,
+        status: "ERROR",
+        latencyMs,
+        tokenIn: estimateTokens(input.prompt + (input.system ?? "")),
+        tokenOut: 0,
+        estimatedCostUsd: null,
+        errorCode: normalizeErrorCode(message),
+      })
+      errors.push(`${providerName}: ${message}`)
+    }
+  }
+
+  const error = new Error(`All AI providers failed. ${errors.join(" | ")}`) as Error & {
+    attempts?: GenerateAiProviderAttempt[]
+  }
+  error.attempts = attemptTelemetry
+  throw error
+}
+
+async function selectProvidersForInput(input: GenerateAiTextInput): Promise<ProviderSelectionFallback | ProviderSelectionActive> {
+  const providers = buildProviderConfigs()
+  if (providers.length === 0) {
+    const fallbackEnabled = (process.env.AI_LOCAL_FALLBACK_ENABLED ?? "true").trim().toLowerCase()
+    if (fallbackEnabled === "false" || fallbackEnabled === "0" || fallbackEnabled === "no") {
+      throw new Error(
+        "No AI provider API key configured. Set one of: OPENAI_API_KEY, ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, GROK_API_KEY, LLAMA_API_KEY, OPENROUTER_API_KEY.",
+      )
+    }
+    return {
+      fallbackText: buildLocalFallbackText(input),
+    } satisfies ProviderSelectionFallback
+  }
+
+  const policy = resolveProviderPolicy({ userPlan: input.userPlan })
+  const allowedByPlan = filterAllowedProviders(
+    providers.map((provider) => provider.provider as PolicyProviderName),
+    policy,
+  ) as AiProviderName[]
+  const filteredProviders = providers.filter((provider) => allowedByPlan.includes(provider.provider))
+  if (filteredProviders.length === 0) {
+    throw new Error("No AI providers are allowed for the current plan.")
+  }
+
+  const providerByName = new Map(filteredProviders.map((provider) => [provider.provider, provider] as const))
   const caps = getDailyCaps()
   const day = utcDayKey()
   const onboardingPool = shouldUseOnboardingPool(input.userPlan)
   const hasCaps = hasAnyDailyCap(caps)
-  const usage = onboardingPool ? await getDailyUsage(day, providers.map((provider) => provider.provider)) : emptyUsageCounters()
+  const usage = onboardingPool
+    ? await getDailyUsage(day, filteredProviders.map((provider) => provider.provider))
+    : emptyUsageCounters()
   const freeWeights = getFreeWeights()
 
   if (onboardingPool && !hasCaps && shouldRequireOnboardingCaps()) {
@@ -491,10 +873,10 @@ export async function generateAiText(input: GenerateAiTextInput): Promise<Genera
   }
 
   const onboardingCandidates = onboardingPool
-    ? providers
+    ? filteredProviders
         .map((provider) => provider.provider)
         .filter((provider) => (!hasCaps ? true : caps[provider] > 0 && (usage[provider] ?? 0) < caps[provider]))
-    : providers.map((provider) => provider.provider)
+    : filteredProviders.map((provider) => provider.provider)
 
   if (onboardingPool && onboardingCandidates.length === 0) {
     throw new Error("Daily free AI capacity is exhausted for onboarding users. Please try later or upgrade your plan.")
@@ -511,44 +893,146 @@ export async function generateAiText(input: GenerateAiTextInput): Promise<Genera
   const selectedOnboardingProvider = onboardingPool
     ? selectOnboardingProvider(onboardingCandidates, caps, usage, freeWeights)
     : null
-  const attempts = buildAttemptOrder(
-    providers,
+  const attemptOrder = buildAttemptOrder(
+    filteredProviders,
     input,
     selectedOnboardingProvider,
+    policy.preferredOrder as AiProviderName[],
     onboardingPool ? new Set(onboardingCandidates) : undefined,
   )
-  if (attempts.length === 0) {
+
+  if (!attemptOrder.length) {
     throw new Error("No eligible AI provider available for this request.")
   }
+
+  return {
+    fallbackText: null,
+    providers: filteredProviders,
+    providerByName,
+    attemptOrder,
+    onboardingPool,
+    caps,
+    day,
+    perUserLimit,
+  } satisfies ProviderSelectionActive
+}
+
+export async function* generateAiTextStream(input: GenerateAiTextInput): AsyncGenerator<GenerateAiTextStreamChunk> {
+  const providerSelection = await selectProvidersForInput(input)
+  if (providerSelection.fallbackText !== null) {
+    const attempts: GenerateAiProviderAttempt[] = [
+      {
+        provider: "fallback",
+        model: "blastermailer-local-fallback-v1",
+        status: "SUCCESS",
+        latencyMs: 0,
+        tokenIn: estimateTokens(input.prompt + (input.system ?? "")),
+        tokenOut: estimateTokens(providerSelection.fallbackText),
+        estimatedCostUsd: 0,
+        errorCode: null,
+      },
+    ]
+    for (const chunk of providerSelection.fallbackText.match(/.{1,16}/g) ?? []) {
+      yield { type: "token", token: chunk }
+    }
+    yield {
+      type: "done",
+      text: providerSelection.fallbackText,
+      model: "blastermailer-local-fallback-v1",
+      provider: "fallback",
+      attempts,
+    }
+    return
+  }
+
+  const activeSelection = providerSelection as ProviderSelectionActive
+  const { providerByName, attemptOrder, onboardingPool, caps, day, perUserLimit } = activeSelection
+  const attemptTelemetry: GenerateAiProviderAttempt[] = []
   const errors: string[] = []
 
-  for (const providerName of attempts) {
+  for (const providerName of attemptOrder) {
     const config = providerByName.get(providerName)
     if (!config) continue
 
+    const startedAt = Date.now()
+    let fullText = ""
+
     try {
-      let result: GenerateAiTextResult
-      if (config.provider === "anthropic") {
-        result = await generateWithAnthropic(config, input)
-      } else {
-        result = await generateWithOpenAiCompatible(config, input)
+      const stream =
+        config.provider === "anthropic"
+          ? generateWithAnthropicStream(config, input)
+          : generateWithOpenAiCompatibleStream(config, input)
+
+      for await (const token of stream) {
+        fullText += token
+        yield { type: "token", token }
       }
+
+      if (!fullText.trim()) {
+        throw new Error(`${config.provider} stream returned empty text`)
+      }
+
+      const latencyMs = Date.now() - startedAt
+      const tokenIn = estimateTokens(input.prompt + (input.system ?? ""))
+      const tokenOut = estimateTokens(fullText)
+      const estimatedCost = estimateCostUsd(config.provider, tokenIn, tokenOut)
+
+      attemptTelemetry.push({
+        provider: config.provider,
+        model: input.model ?? config.model,
+        status: "SUCCESS",
+        latencyMs,
+        tokenIn,
+        tokenOut,
+        estimatedCostUsd: estimatedCost,
+        errorCode: null,
+      })
 
       if (onboardingPool) {
-        if (caps[config.provider] > 0) {
-          await bumpDailyUsage(day, config.provider)
-        }
-        if (perUserLimit > 0 && input.userId) {
-          await bumpUserDailyUsage(day, input.userId)
-        }
+        if (caps[config.provider] > 0) await bumpDailyUsage(day, config.provider)
+        if (perUserLimit > 0 && input.userId) await bumpUserDailyUsage(day, input.userId)
       }
 
-      return result
+      yield {
+        type: "done",
+        text: fullText.trim(),
+        model: input.model ?? config.model,
+        provider: config.provider,
+        attempts: attemptTelemetry,
+      }
+      return
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown provider error"
+      const message = error instanceof Error ? error.message : "Unknown provider stream error"
+      const latencyMs = Date.now() - startedAt
+      attemptTelemetry.push({
+        provider: config.provider,
+        model: input.model ?? config.model,
+        status: "ERROR",
+        latencyMs,
+        tokenIn: estimateTokens(input.prompt + (input.system ?? "")),
+        tokenOut: 0,
+        estimatedCostUsd: null,
+        errorCode: normalizeErrorCode(message),
+      })
       errors.push(`${providerName}: ${message}`)
     }
   }
 
-  throw new Error(`All AI providers failed. ${errors.join(" | ")}`)
+  const fallback = await generateAiText(input)
+  const combinedAttempts = [...attemptTelemetry, ...(fallback.attempts ?? [])]
+  for (const token of fallback.text.match(/.{1,16}/g) ?? []) {
+    yield { type: "token", token }
+  }
+  yield {
+    type: "done",
+    text: fallback.text,
+    model: fallback.model,
+    provider: fallback.provider,
+    attempts: combinedAttempts,
+  }
+
+  if (errors.length) {
+    // Preserve errors for debugging in server logs while returning fallback text.
+    console.warn(`[ai-stream] fallback after stream failures: ${errors.join(" | ")}`)
+  }
 }

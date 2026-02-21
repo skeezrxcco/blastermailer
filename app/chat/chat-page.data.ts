@@ -9,12 +9,12 @@ export const initialChatMessages: ChatMessageSeed[] = [
   {
     id: 1,
     role: "bot",
-    text: "Tell me your campaign goal and I will generate four professional templates.",
+    text: "What type of email campaign are you planning today?",
   },
 ]
 
 export const chatCopy = {
-  suggestionsIntro: "Here are four themed templates. Scroll horizontally and pick one to continue.",
+  suggestionsIntro: "I selected template directions based on your objective. Pick one to continue.",
   emailRequestIntro: "Great. Paste emails in chat or click + to upload a CSV with an email header.",
   promptPlaceholder: "Describe your newsletter campaign...",
   emailInputPlaceholder: "Paste contacts emails or CSV rows here...",

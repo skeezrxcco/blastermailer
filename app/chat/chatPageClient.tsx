@@ -20,6 +20,7 @@ import { buildEditorData, templateOptions, type TemplateEditorData, type Templat
 import { WorkspaceShell } from "@/components/shared/workspace/app-shell"
 import { type SessionUserSummary } from "@/types/session-user"
 import { cn } from "@/lib/utils"
+import type { AiStreamEvent } from "@/lib/ai/types"
 
 type ValidationStats = {
   total: number
@@ -52,6 +53,8 @@ type EditorThemeState = {
 
 type Message = ChatMessageSeed & {
   validationStats?: ValidationStats
+  templateSuggestionIds?: string[]
+  campaignId?: string
 }
 
 type EditorChatMessage = {
@@ -1312,6 +1315,7 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
   const [isCsvProcessing, setIsCsvProcessing] = useState(false)
   const [isAiResponding, setIsAiResponding] = useState(false)
   const [conversationId, setConversationId] = useState<string | null>(null)
+  const [workflowState, setWorkflowState] = useState<string>("INTENT_CAPTURE")
 
   const resizeTextarea = () => {
     const element = textareaRef.current
@@ -1365,6 +1369,77 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
     ])
   }, [searchParams])
 
+  useEffect(() => {
+    if (!conversationId) return
+    try {
+      window.sessionStorage.setItem("bm_ai_conversation_id", conversationId)
+    } catch {
+      // Ignore storage failures in private mode.
+    }
+  }, [conversationId])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const hydrateSession = async () => {
+      try {
+        const fromStorage = window.sessionStorage.getItem("bm_ai_conversation_id")
+        if (fromStorage && !cancelled) setConversationId(fromStorage)
+
+        const response = await fetch("/api/ai/session", {
+          method: "GET",
+          cache: "no-store",
+        })
+        if (!response.ok) return
+        const payload = (await response.json()) as {
+          session?: {
+            conversationId?: string
+            state?: string
+            selectedTemplateId?: string | null
+            summary?: string | null
+          } | null
+        }
+        const session = payload.session
+        if (!session || cancelled) return
+
+        if (session.conversationId) {
+          setConversationId(session.conversationId)
+        }
+        if (session.state) {
+          setWorkflowState(session.state)
+          if (session.state === "AUDIENCE_COLLECTION" || session.state === "VALIDATION_REVIEW") {
+            setComposerMode("emails")
+          }
+        }
+        if (session.selectedTemplateId) {
+          const template = templateOptions.find((entry) => entry.id === session.selectedTemplateId)
+          if (template) applyTemplateSelection(template, false)
+        }
+        if (session.summary) {
+          setMessages((prev) => {
+            if (prev.some((message) => message.text === session.summary)) return prev
+            return [
+              ...prev,
+              {
+                id: Date.now(),
+                role: "bot",
+                text: `Resumed: ${session.summary}`,
+              },
+            ]
+          })
+        }
+      } catch {
+        // Ignore hydration failures.
+      }
+    }
+
+    hydrateSession()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const sendPrompt = async () => {
     const value = prompt.trim()
     if (!value) return
@@ -1392,12 +1467,13 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
     }
 
     const userMessage: Message = { id: Date.now(), role: "user", text: value }
-    setMessages((prev) => [...prev, userMessage])
+    const assistantMessageId = Date.now() + 1
+    setMessages((prev) => [...prev, userMessage, { id: assistantMessageId, role: "bot", text: "" }])
     setPrompt("")
 
     setIsAiResponding(true)
     try {
-      const response = await fetch("/api/ai/generate", {
+      const response = await fetch("/api/ai/stream", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1408,51 +1484,181 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
         }),
       })
 
-      const payload = (await response.json()) as {
-        text?: string
-        error?: string
-        conversationId?: string
-      }
-
       if (!response.ok) {
-        throw new Error(payload.error ?? "AI request failed")
+        const errorText = await response.text()
+        throw new Error(errorText || "AI request failed")
       }
 
-      if (payload.conversationId) {
-        setConversationId(payload.conversationId)
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error("AI stream did not return a readable body.")
       }
 
-      setMessages((prev) => {
-        const next: Message[] = [
-          ...prev,
-          {
-            id: Date.now() + 1,
-            role: "bot",
-            text: String(payload.text ?? "Done."),
-          },
-        ]
+      const decoder = new TextDecoder()
+      let buffer = ""
+      let streamedText = ""
+      let assistantKind: Message["kind"] | undefined
+      let suggestionIds: string[] | undefined
+      let pendingCampaignId: string | undefined
+      let doneState: string | undefined
 
-        if (!selectedTemplate && !prev.some((entry) => entry.kind === "suggestions")) {
-          next.push({
-            id: Date.now() + 2,
-            role: "bot",
-            text: chatCopy.suggestionsIntro,
-            kind: "suggestions",
-          })
+      const updateAssistant = (patch: Partial<Message>) => {
+        setMessages((prev) =>
+          prev.map((message) => (message.id === assistantMessageId ? { ...message, ...patch } : message)),
+        )
+      }
+
+      while (true) {
+        const { value: chunk, done } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(chunk, { stream: true })
+        const frames = buffer.split("\n\n")
+        buffer = frames.pop() ?? ""
+
+        for (const frame of frames) {
+          const lines = frame.split("\n").map((line) => line.trim())
+          const dataLine = lines.find((line) => line.startsWith("data:"))
+          if (!dataLine) continue
+
+          let event: AiStreamEvent | null = null
+          try {
+            event = JSON.parse(dataLine.slice(5).trim()) as AiStreamEvent
+          } catch {
+            event = null
+          }
+          if (!event) continue
+
+          if (event.type === "session") {
+            setConversationId(event.conversationId)
+            setWorkflowState(event.state)
+            continue
+          }
+
+          if (event.type === "state_patch") {
+            setWorkflowState(event.state)
+            if (event.state === "AUDIENCE_COLLECTION" || event.state === "VALIDATION_REVIEW") {
+              setComposerMode("emails")
+            }
+            if (event.selectedTemplateId) {
+              const template = templateOptions.find((entry) => entry.id === event.selectedTemplateId)
+              if (template) {
+                applyTemplateSelection(template, false)
+                assistantKind = "templateReview"
+              }
+            }
+            continue
+          }
+
+          if (event.type === "tool_result") {
+            if (event.result.templateSuggestions?.length) {
+              suggestionIds = event.result.templateSuggestions.map((template) => template.id)
+              assistantKind = "suggestions"
+            }
+            if (event.result.campaignId) {
+              pendingCampaignId = event.result.campaignId
+            }
+            continue
+          }
+
+          if (event.type === "token") {
+            streamedText += event.token
+            updateAssistant({
+              text: streamedText,
+              kind: assistantKind,
+              templateSuggestionIds: suggestionIds,
+              campaignId: pendingCampaignId,
+            })
+            continue
+          }
+
+          if (event.type === "moderation") {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: Date.now() + 3,
+                role: "bot",
+                text: event.message,
+              },
+            ])
+            continue
+          }
+
+          if (event.type === "done") {
+            doneState = event.state
+            setConversationId(event.conversationId)
+            setWorkflowState(event.state)
+
+            if (event.selectedTemplateId) {
+              const template = templateOptions.find((entry) => entry.id === event.selectedTemplateId)
+              if (template) {
+                applyTemplateSelection(template, false)
+                assistantKind = "templateReview"
+              }
+            }
+
+            if (event.templateSuggestions?.length) {
+              suggestionIds = event.templateSuggestions.map((template) => template.id)
+              assistantKind = "suggestions"
+            }
+
+            if (event.state === "AUDIENCE_COLLECTION") {
+              setComposerMode("emails")
+              assistantKind = assistantKind ?? "emailRequest"
+            }
+
+            if (event.state === "VALIDATION_REVIEW") {
+              setComposerMode("emails")
+              assistantKind = assistantKind ?? "validation"
+            }
+
+            pendingCampaignId = event.campaignId ?? pendingCampaignId
+            streamedText = event.text || streamedText
+            updateAssistant({
+              text: streamedText || "Done.",
+              kind: assistantKind,
+              templateSuggestionIds: suggestionIds,
+              campaignId: pendingCampaignId,
+            })
+            continue
+          }
+
+          if (event.type === "error") {
+            throw new Error(event.error)
+          }
         }
+      }
 
-        return next
-      })
+      if (doneState === "QUEUED") {
+        const campaignId = pendingCampaignId ?? `cmp-${Date.now().toString().slice(-8)}`
+        const validAudience = computeValidationStats(emailEntries).valid
+        router.push(
+          `/activity?campaign=${campaignId}&template=${encodeURIComponent(
+            selectedTemplate?.name ?? "Campaign",
+          )}&audience=${validAudience}`,
+        )
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not generate an AI response."
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now() + 1,
-          role: "bot",
-          text: `AI error: ${message}`,
-        },
-      ])
+      setMessages((prev) => {
+        let replaced = false
+        const next = prev.map((entry) => {
+          if (entry.id !== assistantMessageId) return entry
+          replaced = true
+          return {
+            ...entry,
+            text: `AI error: ${message}`,
+          }
+        })
+        if (replaced) return next
+        return [
+          ...next,
+          {
+            id: Date.now() + 2,
+            role: "bot",
+            text: `AI error: ${message}`,
+          },
+        ]
+      })
     } finally {
       setIsAiResponding(false)
     }
@@ -1571,7 +1777,7 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
 
   return (
     <WorkspaceShell tab="chat" pageTitle="Chat" user={initialUser}>
-      <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="relative flex h-full min-h-0 flex-col overflow-hidden" data-workflow-state={workflowState}>
         <div data-workspace-scroll className="scrollbar-hide min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-5 md:px-6 md:py-6" ref={containerRef}>
           {messages.map((message) => (
             <div
@@ -1593,7 +1799,12 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
                 {message.kind === "suggestions" ? (
                   <div className="mt-3">
                     <div className="scrollbar-hide flex gap-3 overflow-x-auto pb-2 pr-1">
-                      {templateOptions.map((template) => {
+                      {(message.templateSuggestionIds?.length
+                        ? message.templateSuggestionIds
+                            .map((id) => templateOptions.find((template) => template.id === id))
+                            .filter((template): template is TemplateOption => Boolean(template))
+                        : templateOptions
+                      ).map((template) => {
                         const selected = selectedTemplate?.id === template.id
                         return (
                           <TemplateSuggestionCard
