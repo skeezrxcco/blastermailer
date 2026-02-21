@@ -5,18 +5,15 @@ export type ChatMessageSeed = {
   kind?: "suggestions" | "templateReview" | "emailRequest" | "validation"
 }
 
-export const initialChatMessages: ChatMessageSeed[] = [
-  {
-    id: 1,
-    role: "bot",
-    text: "What type of email campaign are you planning today?",
-  },
-]
+export const initialChatMessages: ChatMessageSeed[] = []
+
+export const chatHeroTitle = "Por onde devemos comecar?"
+export const chatHeroSubtitle = "Describe your campaign idea and I will guide you step by step."
 
 export const chatCopy = {
   suggestionsIntro: "I selected template directions based on your objective. Pick one to continue.",
   emailRequestIntro: "Great. Paste emails in chat or click + to upload a CSV with an email header.",
-  promptPlaceholder: "Describe your newsletter campaign...",
+  promptPlaceholder: "Pergunte qualquer coisa",
   emailInputPlaceholder: "Paste contacts emails or CSV rows here...",
 }
 

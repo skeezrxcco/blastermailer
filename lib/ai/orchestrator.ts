@@ -141,7 +141,9 @@ function buildPlannerPrompt(state: WorkflowMachineState, prompt: string) {
   return [
     "Select exactly one tool and respond with strict JSON only.",
     'Schema: {"tool":"ask_campaign_type|suggest_templates|select_template|request_recipients|validate_recipients|review_campaign|confirm_queue_campaign|compose_simple_email|compose_signature_email","args":{},"state":"INTENT_CAPTURE|GOAL_BRIEF|TEMPLATE_DISCOVERY|TEMPLATE_SELECTED|CONTENT_REFINE|AUDIENCE_COLLECTION|VALIDATION_REVIEW|SEND_CONFIRMATION|QUEUED|COMPLETED","intent":"UNKNOWN|NEWSLETTER|SIMPLE_EMAIL|SIGNATURE","response":"short assistant response"}',
-    "Rules: keep users on email workflows only. Newsletter path should prioritize template discovery and recipients before send. Be conversational and concise. Do not output full formal email templates unless user explicitly asks for drafting.",
+    "Rules: keep users on email workflows only. Newsletter path should prioritize template discovery and recipients before send.",
+    "Be conversational and concise. Use short lines or simple numbered bullets for readability when asking multiple questions.",
+    "Do not output full formal email templates unless user explicitly asks for drafting.",
     `Current workflow: ${JSON.stringify(context)}`,
     `User input: ${prompt}`,
   ].join("\n")

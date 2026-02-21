@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { Check, Monitor, Pencil, Smartphone, Sparkles, TabletSmartphone, Trash2, Upload } from "lucide-react"
 
 import {
+  chatHeroSubtitle,
+  chatHeroTitle,
   chatCopy,
   confirmedTemplateNotice,
   initialChatMessages,
@@ -489,14 +491,24 @@ function EmailValidationPanel({
   )
 }
 
+function formatAssistantText(text: string) {
+  return text
+    .replace(/\s(\d+\.)\s/g, "\n$1 ")
+    .replace(/:\s(\d+\.)\s/g, ":\n$1 ")
+    .replace(/([?!])\s([A-Z])/g, "$1\n$2")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+}
+
 function AnimatedBotText({ text }: { text: string }) {
+  const formattedText = formatAssistantText(text)
   const [visible, setVisible] = useState("")
   const [isTyping, setIsTyping] = useState(true)
   const animatedRef = useRef(false)
 
   useEffect(() => {
     if (animatedRef.current) {
-      setVisible(text)
+      setVisible(formattedText)
       setIsTyping(false)
       return
     }
@@ -508,18 +520,18 @@ function AnimatedBotText({ text }: { text: string }) {
     let index = 0
     const timer = window.setInterval(() => {
       index += 1
-      setVisible(text.slice(0, index))
-      if (index >= text.length) {
+      setVisible(formattedText.slice(0, index))
+      if (index >= formattedText.length) {
         window.clearInterval(timer)
         setIsTyping(false)
       }
     }, 10)
 
     return () => window.clearInterval(timer)
-  }, [text])
+  }, [formattedText])
 
   return (
-    <p className="leading-relaxed">
+    <p className="whitespace-pre-wrap break-words leading-relaxed">
       {visible}
       {isTyping ? <span className="ml-0.5 inline-block h-4 w-[1px] animate-pulse bg-zinc-300 align-middle" /> : null}
     </p>
@@ -1415,15 +1427,15 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
           const template = templateOptions.find((entry) => entry.id === session.selectedTemplateId)
           if (template) applyTemplateSelection(template, false)
         }
-        if (session.summary) {
+        if (session.state && session.state !== "INTENT_CAPTURE") {
           setMessages((prev) => {
-            if (prev.some((message) => message.text === session.summary)) return prev
+            if (prev.length > 0) return prev
             return [
               ...prev,
               {
                 id: Date.now(),
                 role: "bot",
-                text: `Resumed: ${session.summary}`,
+                text: "Welcome back. Ready to continue your email campaign?",
               },
             ]
           })
@@ -1775,156 +1787,172 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
     router.push(`/activity?campaign=${campaignId}&template=${encodeURIComponent(selectedTemplate.name)}&audience=${stats.valid}`)
   }
 
+  const showHero = messages.length === 0 && workflowState === "INTENT_CAPTURE" && !isAiResponding
+
+  const composer = (
+    <div className={cn("rounded-[28px] border border-zinc-800/80 bg-transparent px-3 py-2", showHero ? "w-full max-w-4xl" : "")}>
+      <input
+        ref={csvFileInputRef}
+        type="file"
+        accept=".csv,text/csv"
+        className="hidden"
+        onChange={(event) => processCsvFile(event.target.files?.[0] ?? null)}
+      />
+      <div className="flex items-end gap-2">
+        <button
+          type="button"
+          disabled={composerMode !== "emails" || isCsvProcessing}
+          onClick={() => csvFileInputRef.current?.click()}
+          className={cn(
+            "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-lg leading-none transition",
+            composerMode === "emails" && !isCsvProcessing
+              ? "bg-zinc-900 text-zinc-100 hover:bg-zinc-800"
+              : "cursor-not-allowed bg-zinc-900/50 text-zinc-600",
+          )}
+          aria-label="Upload CSV recipients"
+        >
+          +
+        </button>
+        <textarea
+          ref={textareaRef}
+          value={prompt}
+          onChange={(event) => setPrompt(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault()
+              sendPrompt()
+            }
+          }}
+          placeholder={composerMode === "emails" ? chatCopy.emailInputPlaceholder : chatCopy.promptPlaceholder}
+          rows={1}
+          className="scrollbar-hide w-full resize-none bg-transparent py-2 text-sm leading-[1.45] text-zinc-100 placeholder:text-zinc-500 focus:outline-none md:text-base"
+        />
+      </div>
+      {!showHero ? (
+        <p className="px-1 pb-1 text-[11px] text-zinc-500">
+          {composerMode === "emails" ? "Enter to validate recipients • Shift+Enter for new line" : "Enter to send • Shift+Enter for new line"}
+        </p>
+      ) : null}
+    </div>
+  )
+
   return (
     <WorkspaceShell tab="chat" pageTitle="Chat" user={initialUser}>
       <div className="relative flex h-full min-h-0 flex-col overflow-hidden" data-workflow-state={workflowState}>
-        <div data-workspace-scroll className="scrollbar-hide min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-5 md:px-6 md:py-6" ref={containerRef}>
-          {messages.map((message) => (
-            <div
-              key={message.id}
-              data-message-kind={message.kind ?? "plain"}
-              className={cn(
-                "animate-in fade-in slide-in-from-bottom-1 duration-300 flex",
-                message.role === "bot" ? "justify-start" : "justify-end",
-              )}
-            >
-              <div
-                className={cn(
-                  "max-w-[96%] rounded-2xl px-3.5 py-3 text-sm",
-                  message.role === "bot" ? "bg-zinc-900/80 text-zinc-100" : "bg-sky-500/20 text-sky-100",
-                )}
-              >
-                {message.role === "bot" ? <AnimatedBotText text={message.text} /> : <p className="leading-relaxed">{message.text}</p>}
-
-                {message.kind === "suggestions" ? (
-                  <div className="mt-3">
-                    <div className="scrollbar-hide flex gap-3 overflow-x-auto pb-2 pr-1">
-                      {(message.templateSuggestionIds?.length
-                        ? message.templateSuggestionIds
-                            .map((id) => templateOptions.find((template) => template.id === id))
-                            .filter((template): template is TemplateOption => Boolean(template))
-                        : templateOptions
-                      ).map((template) => {
-                        const selected = selectedTemplate?.id === template.id
-                        return (
-                          <TemplateSuggestionCard
-                            key={template.id}
-                            template={template}
-                            selected={selected}
-                            onPreview={() => {
-                              applyTemplateSelection(template, false)
-                              setPreviewViewport("desktop")
-                              setIsPreviewOpen(true)
-                            }}
-                            onSelect={() => applyTemplateSelection(template, true)}
-                          />
-                        )
-                      })}
-                    </div>
-                  </div>
-                ) : null}
-
-                {message.kind === "templateReview" && selectedTemplate && templateData ? (
-                  <div className="mt-3">
-                    <SelectedTemplateReviewCard
-                      template={selectedTemplate}
-                      data={templateData}
-                      onEdit={() => {
-                        setEditorViewport("desktop")
-                        setIsEditorOpen(true)
-                      }}
-                      onChange={() => {
-                        setSelectedTemplate(null)
-                        setTemplateData(null)
-                        setThemeState(null)
-                        setEmailEntries([])
-                        setComposerMode("prompt")
-                        const hasSuggestions = messages.some((entry) => entry.kind === "suggestions")
-                        if (!hasSuggestions) {
-                          setMessages((prev) => [
-                            ...prev,
-                            {
-                              id: Date.now(),
-                              role: "bot",
-                              text: "No problem. Pick another template below.",
-                              kind: "suggestions",
-                            },
-                          ])
-                          return
-                        }
-                        window.setTimeout(() => {
-                          scrollToExistingSuggestions()
-                        }, 60)
-                      }}
-                      onContinue={requestEmails}
-                    />
-                  </div>
-                ) : null}
-
-                {message.kind === "emailRequest" ? (
-                  <p className="mt-3 text-xs text-zinc-400">Use + to upload CSV, or paste emails directly in chat input and press Enter.</p>
-                ) : null}
-
-                {message.kind === "validation" ? (
-                  <EmailValidationPanel
-                    entries={emailEntries}
-                    onEditEntry={updateEmailEntry}
-                    onRemoveEntry={removeEmailEntry}
-                    onConfirmSend={confirmSendCampaign}
-                  />
-                ) : null}
-              </div>
-            </div>
-          ))}
-
-          {isCsvProcessing ? <CsvSheetSkeleton /> : null}
-          {isAiResponding ? <ActivityBubble label="AI is thinking" /> : null}
-        </div>
-
-        <div className="p-3 pt-0 md:p-4 md:pt-0">
-          <div className="rounded-[28px] border border-zinc-800/80 bg-transparent px-3 py-2">
-            <input
-              ref={csvFileInputRef}
-              type="file"
-              accept=".csv,text/csv"
-              className="hidden"
-              onChange={(event) => processCsvFile(event.target.files?.[0] ?? null)}
-            />
-            <div className="flex items-end gap-2">
-              <button
-                type="button"
-                disabled={composerMode !== "emails" || isCsvProcessing}
-                onClick={() => csvFileInputRef.current?.click()}
-                className={cn(
-                  "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-lg leading-none transition",
-                  composerMode === "emails" && !isCsvProcessing
-                    ? "bg-zinc-900 text-zinc-100 hover:bg-zinc-800"
-                    : "cursor-not-allowed bg-zinc-900/50 text-zinc-600",
-                )}
-                aria-label="Upload CSV recipients"
-              >
-                +
-              </button>
-              <textarea
-                ref={textareaRef}
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault()
-                    sendPrompt()
-                  }
-                }}
-                placeholder={composerMode === "emails" ? chatCopy.emailInputPlaceholder : chatCopy.promptPlaceholder}
-                rows={1}
-                className="scrollbar-hide w-full resize-none bg-transparent py-2 text-sm leading-[1.45] text-zinc-100 placeholder:text-zinc-500 focus:outline-none md:text-base"
-              />
-            </div>
-            <p className="px-1 pb-1 text-[11px] text-zinc-500">
-              {composerMode === "emails" ? "Enter to validate recipients • Shift+Enter for new line" : "Enter to send • Shift+Enter for new line"}
-            </p>
+        {showHero ? (
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-4">
+            <h1 className="text-center text-3xl font-medium text-zinc-100 md:text-5xl">{chatHeroTitle}</h1>
+            <p className="mt-4 max-w-2xl text-center text-sm text-zinc-400 md:text-base">{chatHeroSubtitle}</p>
+            <div className="mt-8 w-full max-w-4xl">{composer}</div>
           </div>
-        </div>
+        ) : (
+          <>
+            <div data-workspace-scroll className="scrollbar-hide min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-5 md:px-6 md:py-6" ref={containerRef}>
+              {messages.map((message) => (
+                <div
+                  key={message.id}
+                  data-message-kind={message.kind ?? "plain"}
+                  className={cn(
+                    "animate-in fade-in slide-in-from-bottom-1 duration-300 flex",
+                    message.role === "bot" ? "justify-start" : "justify-end",
+                  )}
+                >
+                  <div
+                    className={cn(
+                      "max-w-[96%] rounded-2xl px-3.5 py-3 text-sm",
+                      message.role === "bot" ? "bg-zinc-900/80 text-zinc-100" : "bg-sky-500/20 text-sky-100",
+                    )}
+                  >
+                    {message.role === "bot" ? <AnimatedBotText text={message.text} /> : <p className="leading-relaxed">{message.text}</p>}
+
+                    {message.kind === "suggestions" ? (
+                      <div className="mt-3">
+                        <div className="scrollbar-hide flex gap-3 overflow-x-auto pb-2 pr-1">
+                          {(message.templateSuggestionIds?.length
+                            ? message.templateSuggestionIds
+                                .map((id) => templateOptions.find((template) => template.id === id))
+                                .filter((template): template is TemplateOption => Boolean(template))
+                            : templateOptions
+                          ).map((template) => {
+                            const selected = selectedTemplate?.id === template.id
+                            return (
+                              <TemplateSuggestionCard
+                                key={template.id}
+                                template={template}
+                                selected={selected}
+                                onPreview={() => {
+                                  applyTemplateSelection(template, false)
+                                  setPreviewViewport("desktop")
+                                  setIsPreviewOpen(true)
+                                }}
+                                onSelect={() => applyTemplateSelection(template, true)}
+                              />
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {message.kind === "templateReview" && selectedTemplate && templateData ? (
+                      <div className="mt-3">
+                        <SelectedTemplateReviewCard
+                          template={selectedTemplate}
+                          data={templateData}
+                          onEdit={() => {
+                            setEditorViewport("desktop")
+                            setIsEditorOpen(true)
+                          }}
+                          onChange={() => {
+                            setSelectedTemplate(null)
+                            setTemplateData(null)
+                            setThemeState(null)
+                            setEmailEntries([])
+                            setComposerMode("prompt")
+                            const hasSuggestions = messages.some((entry) => entry.kind === "suggestions")
+                            if (!hasSuggestions) {
+                              setMessages((prev) => [
+                                ...prev,
+                                {
+                                  id: Date.now(),
+                                  role: "bot",
+                                  text: "No problem. Pick another template below.",
+                                  kind: "suggestions",
+                                },
+                              ])
+                              return
+                            }
+                            window.setTimeout(() => {
+                              scrollToExistingSuggestions()
+                            }, 60)
+                          }}
+                          onContinue={requestEmails}
+                        />
+                      </div>
+                    ) : null}
+
+                    {message.kind === "emailRequest" ? (
+                      <p className="mt-3 text-xs text-zinc-400">Use + to upload CSV, or paste emails directly in chat input and press Enter.</p>
+                    ) : null}
+
+                    {message.kind === "validation" ? (
+                      <EmailValidationPanel
+                        entries={emailEntries}
+                        onEditEntry={updateEmailEntry}
+                        onRemoveEntry={removeEmailEntry}
+                        onConfirmSend={confirmSendCampaign}
+                      />
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+
+              {isCsvProcessing ? <CsvSheetSkeleton /> : null}
+              {isAiResponding ? <ActivityBubble label="AI is thinking" /> : null}
+            </div>
+
+            <div className="p-3 pt-0 md:p-4 md:pt-0">{composer}</div>
+          </>
+        )}
       </div>
 
       {isPreviewOpen && selectedTemplate && templateData && themeState ? (
