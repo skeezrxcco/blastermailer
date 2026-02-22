@@ -6,6 +6,7 @@ export type ToolExecutionInput = {
   args: Record<string, unknown>
   context: WorkflowSessionContext
   selectedTemplateId: string | null
+  userPlan?: string
 }
 
 function normalize(text: string) {
@@ -65,16 +66,21 @@ function parseEmails(input: string) {
 
 export function executeTool(input: ToolExecutionInput): ToolResultPayload {
   const tool = input.tool.trim().toLowerCase()
+  const normalizedPlan = String(input.userPlan ?? "")
+    .trim()
+    .toLowerCase()
+  const isProUser = normalizedPlan === "pro" || normalizedPlan === "enterprise"
 
   if (tool === "ask_campaign_type") {
     return {
-      text: "Great, let’s do this. What are you trying to send: newsletter, promotion, product update, or a one-off email?",
+      text: "Great, what are you sending today: newsletter, promo, product update, or one-off email?",
     }
   }
 
   if (tool === "suggest_templates") {
     const query = String(input.args.query ?? input.context.goal ?? "")
-    const ranked = [...templateOptions]
+    const ranked = templateOptions
+      .filter((template) => isProUser || template.accessTier !== "pro")
       .sort((a, b) => scoreTemplate(b, query) - scoreTemplate(a, query))
       .slice(0, 4)
       .map(toSuggestion)
@@ -91,6 +97,11 @@ export function executeTool(input: ToolExecutionInput): ToolResultPayload {
     if (!found) {
       return {
         text: "I could not find that template. Pick one of the suggestions and I will continue.",
+      }
+    }
+    if (!isProUser && found.accessTier === "pro") {
+      return {
+        text: `${found.name} is a Pro template. Upgrade to Pro to use it, or choose a free template and I’ll continue.`,
       }
     }
     return {
@@ -117,25 +128,43 @@ export function executeTool(input: ToolExecutionInput): ToolResultPayload {
   if (tool === "review_campaign") {
     const templateName = templateOptions.find((entry) => entry.id === input.selectedTemplateId)?.name ?? "selected template"
     return {
-      text: `Quick review: goal captured, ${templateName} configured, and recipients validated. Ready for final confirmation.`,
+      text: [
+        `Quick review: goal captured, ${templateName} configured, and recipients validated.`,
+        "",
+        "Before we send, choose your delivery method:",
+        "- Platform SMTP (default, ready to go)",
+        "- Your own SMTP server (custom configuration)",
+        "- Dedicated SMTP (higher deliverability)",
+        "",
+        "You can also schedule for a specific time instead of sending immediately. Ready to confirm?",
+      ].join("\n"),
     }
   }
 
   if (tool === "confirm_queue_campaign") {
     const campaignId = `cmp-${Date.now().toString().slice(-8)}`
+    const smtpSource = String(input.args.smtpSource ?? "platform")
+    const schedule = input.args.scheduledAt ? String(input.args.scheduledAt) : null
+    const smtpLabel = smtpSource === "user" ? "your custom SMTP" : smtpSource === "dedicated" ? "dedicated SMTP" : "platform SMTP"
+    const scheduleLabel = schedule ? `scheduled for ${schedule}` : "queued for immediate delivery"
+
     return {
-      text: `Campaign queued successfully with ID ${campaignId}.`,
+      text: [
+        `Campaign ${scheduleLabel} via ${smtpLabel} (ID: ${campaignId}).`,
+        "Emails will be sent through our queue system with progress tracking.",
+        "You'll receive real-time updates as each recipient is processed.",
+      ].join(" "),
       campaignId,
     }
   }
 
   if (tool === "compose_signature_email") {
     return {
-      text: "Perfect. I can draft a clean signature email. Share tone and who it should be sent to.",
+      text: "Perfect. I can draft a clean signature email. Tell me who it is for, the tone, and the CTA. You can send to multiple recipients at once.",
     }
   }
 
   return {
-    text: "Nice. I can draft this with you. Share the goal, audience, and CTA you want.",
+    text: "Got it. Tell me your goal, target audience, and CTA, and I'll draft it with you. We can send to your full mailing list when ready.",
   }
 }

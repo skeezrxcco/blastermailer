@@ -6,33 +6,6 @@ export type ModerationResult = {
   message: string
 }
 
-const EMAIL_SCOPE_HINTS = [
-  "email",
-  "newsletter",
-  "campaign",
-  "subject line",
-  "recipients",
-  "mail",
-  "smtp",
-  "signature",
-  "cta",
-]
-
-const GREETING_HINTS = [
-  "hi",
-  "hello",
-  "hey",
-  "yo",
-  "good morning",
-  "good afternoon",
-  "good evening",
-  "ola",
-  "olá",
-  "bom dia",
-  "boa tarde",
-  "boa noite",
-]
-
 const SAFETY_SENSITIVE_HINTS = [
   "phishing",
   "steal password",
@@ -45,13 +18,18 @@ const SAFETY_SENSITIVE_HINTS = [
   "credential stuffing",
 ]
 
+const COMPLETELY_OFF_TOPIC_HINTS = [
+  "write me python code",
+  "solve this math",
+  "translate this to french",
+  "what is the capital of",
+  "explain quantum",
+  "write a poem about",
+  "tell me a joke",
+]
+
 function normalize(value: string) {
   return value.trim().toLowerCase()
-}
-
-function isEmailScopePrompt(prompt: string) {
-  const candidate = normalize(prompt)
-  return EMAIL_SCOPE_HINTS.some((hint) => candidate.includes(hint))
 }
 
 function isUnsafePrompt(prompt: string) {
@@ -59,11 +37,9 @@ function isUnsafePrompt(prompt: string) {
   return SAFETY_SENSITIVE_HINTS.some((hint) => candidate.includes(hint))
 }
 
-function isGreetingPrompt(prompt: string) {
+function isCompletelyOffTopic(prompt: string) {
   const candidate = normalize(prompt)
-  if (!candidate) return false
-  if (candidate.length <= 16 && GREETING_HINTS.includes(candidate)) return true
-  return GREETING_HINTS.some((hint) => candidate === hint || candidate.startsWith(`${hint} `))
+  return COMPLETELY_OFF_TOPIC_HINTS.some((hint) => candidate.startsWith(hint))
 }
 
 export function moderatePrompt(rawPrompt: string): ModerationResult {
@@ -85,18 +61,10 @@ export function moderatePrompt(rawPrompt: string): ModerationResult {
     }
   }
 
-  if (isGreetingPrompt(prompt)) {
-    return {
-      action: "allow",
-      sanitizedPrompt: prompt,
-      message: "Greeting detected.",
-    }
-  }
-
-  if (!isEmailScopePrompt(prompt)) {
+  if (isCompletelyOffTopic(prompt)) {
     return {
       action: "rewrite_scope",
-      sanitizedPrompt: `Keep this conversation focused on email workflows. Ask a short clarifying question about campaign type and goal before drafting.`,
+      sanitizedPrompt: prompt,
       message: "Redirected to email scope.",
     }
   }

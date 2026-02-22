@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth"
 
 import { authOptions } from "@/lib/auth"
 import { orchestrateAiChatStream } from "@/lib/ai/orchestrator"
+import { normalizeAiModelMode } from "@/lib/ai/model-mode"
 
 function formatSseEvent(event: Record<string, unknown>) {
   const eventName = String(event.type ?? "message")
@@ -17,6 +18,7 @@ export async function POST(request: Request) {
   const body = (await request.json()) as {
     prompt?: string
     conversationId?: string
+    mode?: string
     provider?: string
     model?: string
     system?: string
@@ -36,6 +38,7 @@ export async function POST(request: Request) {
           userPlan: session.user.plan,
           prompt,
           conversationId: body.conversationId,
+          mode: normalizeAiModelMode(body.mode),
           provider: body.provider,
           model: body.model,
           system: body.system,
@@ -67,4 +70,3 @@ export async function POST(request: Request) {
     },
   })
 }
-

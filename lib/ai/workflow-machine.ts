@@ -29,6 +29,7 @@ export type WorkflowMachineState = {
     audience?: string
     tone?: string
     cta?: string
+    incoherentTurns?: number
   }
 }
 
@@ -104,4 +105,3 @@ export function applyWorkflowPatch(
     },
   }
 }
-

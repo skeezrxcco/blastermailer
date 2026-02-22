@@ -3,11 +3,13 @@ import { getServerSession } from "next-auth"
 
 import { authOptions } from "@/lib/auth"
 import { orchestrateAiChatStream } from "@/lib/ai/orchestrator"
+import { normalizeAiModelMode } from "@/lib/ai/model-mode"
 import type { AiStreamEvent } from "@/lib/ai/types"
 
 function statusForAiError(message: string): number {
   const normalized = message.toLowerCase()
   if (normalized.includes("limit") || normalized.includes("rate")) return 429
+  if (normalized.includes("credit")) return 429
   if (normalized.includes("unauthorized")) return 401
   if (normalized.includes("provider") || normalized.includes("service")) return 503
   return 500
@@ -22,6 +24,7 @@ export async function POST(request: Request) {
   const body = (await request.json()) as {
     prompt?: string
     system?: string
+    mode?: string
     model?: string
     provider?: string
     conversationId?: string
@@ -41,6 +44,7 @@ export async function POST(request: Request) {
       userPlan: session.user.plan,
       prompt,
       conversationId: body.conversationId,
+      mode: normalizeAiModelMode(body.mode),
       model: body.model,
       provider: body.provider,
       system: body.system,

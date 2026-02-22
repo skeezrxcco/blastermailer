@@ -36,6 +36,7 @@ export type WorkflowSessionContext = {
   audience?: string
   tone?: string
   cta?: string
+  incoherentTurns?: number
 }
 
 export type WorkflowStatePatch = {
@@ -112,6 +113,8 @@ export type AiStreamEvent =
       templateSuggestions?: TemplateSuggestion[]
       recipientStats?: RecipientValidationStats | null
       campaignId?: string | null
+      remainingCredits?: number | null
+      maxCredits?: number | null
     }
   | {
       type: "error"

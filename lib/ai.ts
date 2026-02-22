@@ -3,9 +3,11 @@ export type GenerateAiTextInput = {
   system?: string
   model?: string
   temperature?: number
+  mode?: "essential" | "balanced" | "premium"
   provider?: string
   userId?: string
   userPlan?: string
+  maxOutputTokens?: number
 }
 
 export type GenerateAiProviderAttempt = {
@@ -75,6 +77,7 @@ type ProviderSelectionActive = {
 const DEFAULT_PRIORITY: AiProviderName[] = ["deepseek", "llama", "openrouter", "openai", "anthropic", "grok"]
 const ONBOARDING_FREE_PLANS = new Set(["starter", "free", "trial"])
 const DEFAULT_FREE_DAILY_PER_USER = 20
+const DEFAULT_MAX_OUTPUT_TOKENS = 640
 const DEFAULT_FREE_WEIGHTS: Record<AiProviderName, number> = {
   openai: 0.85,
   anthropic: 0.75,
@@ -149,10 +152,26 @@ function parsePositiveFloat(value: string | undefined): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
 }
 
+function resolveMaxOutputTokens(input: GenerateAiTextInput) {
+  const byInput = parsePositiveInt(String(input.maxOutputTokens ?? ""))
+  if (byInput > 0) return byInput
+  const byEnv = parsePositiveInt(process.env.AI_MAX_OUTPUT_TOKENS)
+  if (byEnv > 0) return byEnv
+  return DEFAULT_MAX_OUTPUT_TOKENS
+}
+
 function estimateTokens(value: string) {
   const trimmed = value.trim()
   if (!trimmed) return 0
   return Math.ceil(trimmed.length / 4)
+}
+
+function clampTextToTokenBudget(text: string, maxOutputTokens: number) {
+  const normalized = text.trim()
+  if (!normalized) return normalized
+  if (estimateTokens(normalized) <= maxOutputTokens) return normalized
+  const maxChars = Math.max(64, maxOutputTokens * 4)
+  return normalized.slice(0, maxChars).trimEnd()
 }
 
 function estimateCostUsd(provider: AiProviderName, tokenIn: number, tokenOut: number) {
@@ -472,6 +491,16 @@ function buildAttemptOrder(
 
   push(selectedOnboardingProvider)
 
+  const modePreferredOrder: Record<NonNullable<GenerateAiTextInput["mode"]>, AiProviderName[]> = {
+    essential: ["openrouter", "llama", "deepseek", "openai", "anthropic", "grok"],
+    balanced: ["deepseek", "openai", "anthropic", "openrouter", "llama", "grok"],
+    premium: ["openai", "anthropic", "grok", "deepseek", "openrouter", "llama"],
+  }
+  const mode = input.mode ?? "essential"
+  for (const provider of modePreferredOrder[mode]) {
+    push(provider)
+  }
+
   for (const provider of policyOrder ?? []) {
     push(provider)
   }
@@ -496,6 +525,7 @@ async function generateWithOpenAiCompatible(
   config: ProviderConfig,
   input: GenerateAiTextInput,
 ): Promise<GenerateAiTextResult> {
+  const maxOutputTokens = resolveMaxOutputTokens(input)
   const response = await fetch(`${config.baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -506,6 +536,7 @@ async function generateWithOpenAiCompatible(
     body: JSON.stringify({
       model: input.model ?? config.model,
       temperature: input.temperature ?? 0.4,
+      max_tokens: maxOutputTokens,
       messages: [
         ...(input.system ? [{ role: "system", content: input.system }] : []),
         { role: "user", content: input.prompt },
@@ -534,19 +565,22 @@ async function generateWithOpenAiCompatible(
           .map((part) => part.text ?? "")
           .join("\n")
           .trim()
+  const clampedText = clampTextToTokenBudget(text, maxOutputTokens)
 
-  if (!text) {
+  if (!clampedText) {
     throw new Error(`${config.provider} response did not include text`)
   }
 
   return {
-    text,
+    text: clampedText,
     model: input.model ?? config.model,
     provider: config.provider,
   }
 }
 
 async function generateWithAnthropic(config: ProviderConfig, input: GenerateAiTextInput): Promise<GenerateAiTextResult> {
+  const maxOutputTokens = resolveMaxOutputTokens(input)
+  const anthropicMaxTokens = parsePositiveInt(process.env.ANTHROPIC_MAX_TOKENS) || 1024
   const response = await fetch(`${config.baseUrl}/messages`, {
     method: "POST",
     headers: {
@@ -556,7 +590,7 @@ async function generateWithAnthropic(config: ProviderConfig, input: GenerateAiTe
     },
     body: JSON.stringify({
       model: input.model ?? config.model,
-      max_tokens: parsePositiveInt(process.env.ANTHROPIC_MAX_TOKENS) || 1024,
+      max_tokens: Math.max(64, Math.min(maxOutputTokens, anthropicMaxTokens)),
       temperature: input.temperature ?? 0.4,
       system: input.system,
       messages: [
@@ -579,18 +613,20 @@ async function generateWithAnthropic(config: ProviderConfig, input: GenerateAiTe
     .map((part) => part.text ?? "")
     .join("\n")
     .trim()
-  if (!text) {
+  const clampedText = clampTextToTokenBudget(text, maxOutputTokens)
+  if (!clampedText) {
     throw new Error("anthropic response did not include text")
   }
 
   return {
-    text,
+    text: clampedText,
     model: input.model ?? config.model,
     provider: config.provider,
   }
 }
 
 async function* generateWithOpenAiCompatibleStream(config: ProviderConfig, input: GenerateAiTextInput) {
+  const maxOutputTokens = resolveMaxOutputTokens(input)
   const response = await fetch(`${config.baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -601,6 +637,7 @@ async function* generateWithOpenAiCompatibleStream(config: ProviderConfig, input
     body: JSON.stringify({
       model: input.model ?? config.model,
       temperature: input.temperature ?? 0.4,
+      max_tokens: maxOutputTokens,
       stream: true,
       messages: [
         ...(input.system ? [{ role: "system", content: input.system }] : []),
@@ -649,6 +686,8 @@ async function* generateWithOpenAiCompatibleStream(config: ProviderConfig, input
 }
 
 async function* generateWithAnthropicStream(config: ProviderConfig, input: GenerateAiTextInput) {
+  const maxOutputTokens = resolveMaxOutputTokens(input)
+  const anthropicMaxTokens = parsePositiveInt(process.env.ANTHROPIC_MAX_TOKENS) || 1024
   const response = await fetch(`${config.baseUrl}/messages`, {
     method: "POST",
     headers: {
@@ -658,7 +697,7 @@ async function* generateWithAnthropicStream(config: ProviderConfig, input: Gener
     },
     body: JSON.stringify({
       model: input.model ?? config.model,
-      max_tokens: parsePositiveInt(process.env.ANTHROPIC_MAX_TOKENS) || 1024,
+      max_tokens: Math.max(64, Math.min(maxOutputTokens, anthropicMaxTokens)),
       temperature: input.temperature ?? 0.4,
       stream: true,
       system: input.system,
@@ -708,41 +747,69 @@ function buildLocalFallbackText(input: GenerateAiTextInput) {
   const normalized = prompt.toLowerCase()
 
   if (!prompt) {
-    return "Tell me your campaign goal, audience, tone, and CTA. I will generate four professional newsletter directions."
+    return [
+      "Hey! I'm your email campaign assistant.",
+      "Tell me what you want to send and who your audience is, and I'll guide you through creating and sending it.",
+    ].join(" ")
   }
 
-  if (normalized === "hi" || normalized === "hello" || normalized.startsWith("hello ")) {
-    return "Ready. Share your campaign goal and target audience, and I will draft four professional template directions."
+  if (normalized === "hi" || normalized === "hello" || normalized === "hey" || normalized.startsWith("hello ") || normalized.startsWith("hey ")) {
+    return [
+      "Hey! I can help you create and send email campaigns to your audience.",
+      "",
+      "To get started, tell me:",
+      "1. What's the goal of your email? (promote a product, share news, announce an event, etc.)",
+      "2. Who are you sending to? (customers, subscribers, leads, etc.)",
+      "",
+      "Or just describe what you need and I'll guide you through it.",
+    ].join("\n")
   }
 
-  if (normalized.includes("email") || normalized.includes("audience") || normalized.includes("csv")) {
-    return "Great. Next step: provide recipients (paste emails or upload CSV with an `email` header). I will validate and deduplicate before sending."
+  if (normalized.includes("email") || normalized.includes("audience") || normalized.includes("csv") || normalized.includes("recipient")) {
+    return [
+      "Let's get your recipients set up.",
+      "You can paste email addresses directly in the chat, or click + to upload a CSV file with an email column.",
+      "I'll validate everything and flag any duplicates or invalid addresses before we send.",
+    ].join(" ")
   }
 
   if (normalized.includes("template") || normalized.includes("design")) {
-    return "Understood. I can generate four template concepts tailored to your goal, each with tone, layout direction, and CTA hierarchy."
+    return "I'll show you some template options that fit your campaign. Each one is fully customizable - you can edit text, images, colors, and layout. Let me know your goal and I'll find the best match."
+  }
+
+  if (normalized.includes("send") || normalized.includes("schedule") || normalized.includes("smtp")) {
+    return [
+      "When you're ready to send, you have a few options:",
+      "1. Send immediately via our platform SMTP",
+      "2. Connect your own SMTP server",
+      "3. Use a dedicated SMTP for higher deliverability",
+      "",
+      "You can also schedule emails for a specific time. All emails go through our queue system with real-time progress tracking.",
+    ].join("\n")
   }
 
   return [
-    "I can help you build this campaign now.",
-    "Please confirm these inputs so I can generate final-ready content:",
-    "1) Campaign objective",
-    "2) Audience segment",
-    "3) Tone and primary CTA",
-    "Then I will return four professional newsletter directions plus recommended next steps.",
+    "I can help you with that! To build the best campaign, I need a few details:",
+    "1. What's the goal? (promotion, newsletter, announcement, etc.)",
+    "2. Who's your audience?",
+    "3. What tone and call-to-action do you want?",
+    "",
+    "Share what you have and I'll take it from there.",
   ].join("\n")
 }
 
 export async function generateAiText(input: GenerateAiTextInput): Promise<GenerateAiTextResult> {
+  const maxOutputTokens = resolveMaxOutputTokens(input)
   const providerSelection = await selectProvidersForInput(input)
   if (providerSelection.fallbackText !== null) {
+    const fallbackText = clampTextToTokenBudget(providerSelection.fallbackText, maxOutputTokens)
     return {
-      text: providerSelection.fallbackText,
+      text: fallbackText,
       model: "blastermailer-local-fallback-v1",
       provider: "fallback",
       latencyMs: 0,
       tokenIn: estimateTokens(input.prompt + (input.system ?? "")),
-      tokenOut: estimateTokens(providerSelection.fallbackText),
+      tokenOut: estimateTokens(fallbackText),
       estimatedCostUsd: 0,
       attempts: [
         {
@@ -751,7 +818,7 @@ export async function generateAiText(input: GenerateAiTextInput): Promise<Genera
           status: "SUCCESS",
           latencyMs: 0,
           tokenIn: estimateTokens(input.prompt + (input.system ?? "")),
-          tokenOut: estimateTokens(providerSelection.fallbackText),
+          tokenOut: estimateTokens(fallbackText),
           estimatedCostUsd: 0,
           errorCode: null,
         },
@@ -918,8 +985,10 @@ async function selectProvidersForInput(input: GenerateAiTextInput): Promise<Prov
 }
 
 export async function* generateAiTextStream(input: GenerateAiTextInput): AsyncGenerator<GenerateAiTextStreamChunk> {
+  const maxOutputTokens = resolveMaxOutputTokens(input)
   const providerSelection = await selectProvidersForInput(input)
   if (providerSelection.fallbackText !== null) {
+    const fallbackText = clampTextToTokenBudget(providerSelection.fallbackText, maxOutputTokens)
     const attempts: GenerateAiProviderAttempt[] = [
       {
         provider: "fallback",
@@ -927,17 +996,17 @@ export async function* generateAiTextStream(input: GenerateAiTextInput): AsyncGe
         status: "SUCCESS",
         latencyMs: 0,
         tokenIn: estimateTokens(input.prompt + (input.system ?? "")),
-        tokenOut: estimateTokens(providerSelection.fallbackText),
+        tokenOut: estimateTokens(fallbackText),
         estimatedCostUsd: 0,
         errorCode: null,
       },
     ]
-    for (const chunk of providerSelection.fallbackText.match(/.{1,16}/g) ?? []) {
+    for (const chunk of fallbackText.match(/.{1,16}/g) ?? []) {
       yield { type: "token", token: chunk }
     }
     yield {
       type: "done",
-      text: providerSelection.fallbackText,
+      text: fallbackText,
       model: "blastermailer-local-fallback-v1",
       provider: "fallback",
       attempts,
@@ -966,11 +1035,14 @@ export async function* generateAiTextStream(input: GenerateAiTextInput): AsyncGe
       for await (const token of stream) {
         fullText += token
         yield { type: "token", token }
+        if (estimateTokens(fullText) >= maxOutputTokens) break
       }
 
       if (!fullText.trim()) {
         throw new Error(`${config.provider} stream returned empty text`)
       }
+
+      fullText = clampTextToTokenBudget(fullText, maxOutputTokens)
 
       const latencyMs = Date.now() - startedAt
       const tokenIn = estimateTokens(input.prompt + (input.system ?? ""))

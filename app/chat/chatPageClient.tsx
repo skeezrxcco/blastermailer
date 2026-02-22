@@ -2,7 +2,7 @@
 
 import { type DragEvent, type ReactNode, useEffect, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Check, Monitor, Pencil, Smartphone, Sparkles, TabletSmartphone, Trash2, Upload } from "lucide-react"
+import { Check, ChevronDown, Monitor, Pencil, Smartphone, Sparkles, TabletSmartphone, Trash2, Upload } from "lucide-react"
 
 import {
   chatHeroSubtitle,
@@ -20,6 +20,7 @@ import { EyeIcon } from "@/components/ui/eye"
 import { TemplatePreview } from "@/components/shared/newsletter/template-preview"
 import { buildEditorData, templateOptions, type TemplateEditorData, type TemplateOption } from "@/components/shared/newsletter/template-data"
 import { WorkspaceShell } from "@/components/shared/workspace/app-shell"
+import { useAiCredits } from "@/hooks/use-ai-credits"
 import { type SessionUserSummary } from "@/types/session-user"
 import { cn } from "@/lib/utils"
 import type { AiStreamEvent } from "@/lib/ai/types"
@@ -65,6 +66,27 @@ type EditorChatMessage = {
   text: string
 }
 
+type ModelChoice = {
+  id: string
+  label: string
+  mode: "essential" | "balanced" | "premium"
+  requiresPro?: boolean
+  expenseTier?: "low" | "medium" | "high"
+  estimatedCostPerMessage?: number
+}
+
+type ChatSessionSummary = {
+  conversationId: string
+  state: string
+  intent: string
+  selectedTemplateId?: string | null
+  summary?: string | null
+  context?: {
+    goal?: string
+  } | null
+  lastActivityAt?: string
+}
+
 type CsvParseResult =
   | { ok: true; entries: EmailEntry[] }
   | { ok: false; error: string }
@@ -74,6 +96,12 @@ const viewportSpecs: Record<PreviewMode, { label: string; width: number; height:
   tablet: { label: "Tablet", width: 834, height: 1112 },
   mobile: { label: "Mobile", width: 390, height: 844 },
 }
+
+const modelChoices: ModelChoice[] = [
+  { id: "essential", label: "Mini", mode: "essential", expenseTier: "low", estimatedCostPerMessage: 0.00012 },
+  { id: "balanced", label: "Standard", mode: "balanced", requiresPro: true, expenseTier: "medium", estimatedCostPerMessage: 0.001 },
+  { id: "premium", label: "Premium", mode: "premium", requiresPro: true, expenseTier: "high", estimatedCostPerMessage: 0.005 },
+]
 
 function looksLikeEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
@@ -538,18 +566,15 @@ function AnimatedBotText({ text }: { text: string }) {
   )
 }
 
-function ActivityBubble({ label }: { label: string }) {
+function AssistantSignal() {
   return (
     <div className="flex justify-start">
-      <div className="rounded-2xl bg-zinc-900/90 px-3 py-2 text-xs text-zinc-300">
-        <div className="flex items-center gap-2">
-          {label}
-          <span className="inline-flex gap-1">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-zinc-300" />
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-zinc-300 [animation-delay:120ms]" />
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-zinc-300 [animation-delay:240ms]" />
-          </span>
-        </div>
+      <div className="inline-flex items-center gap-2 rounded-full bg-zinc-900/70 px-3 py-2">
+        <span className="relative flex h-2.5 w-2.5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-300/35" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-sky-300/85" />
+        </span>
+        <span className="h-1.5 w-12 animate-pulse rounded-full bg-zinc-700" />
       </div>
     </div>
   )
@@ -1328,15 +1353,30 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
   const [isAiResponding, setIsAiResponding] = useState(false)
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [workflowState, setWorkflowState] = useState<string>("INTENT_CAPTURE")
+  const [selectedModelChoice, setSelectedModelChoice] = useState<string>("essential")
+  const [isComposerStacked, setIsComposerStacked] = useState(false)
+  const isProUserPlan = initialUser.plan === "pro" || initialUser.plan === "enterprise"
+  const aiCredits = useAiCredits()
+  const isOutOfCredits = aiCredits.remainingBudgetUsd <= 0
+  const templateParam = searchParams.get("template")
+  const newChatParam = searchParams.get("newChat")
+  const conversationIdParam = searchParams.get("conversationId")
 
   const resizeTextarea = () => {
     const element = textareaRef.current
     if (!element) return
-    element.style.height = "auto"
-    const maxHeight = 240
+    const minHeight = 28
+    const maxHeight = 132
+    element.style.height = "0px"
     const nextHeight = Math.min(element.scrollHeight, maxHeight)
-    element.style.height = `${Math.max(nextHeight, 50)}px`
+    element.style.height = `${Math.max(nextHeight, minHeight)}px`
     element.style.overflowY = element.scrollHeight > maxHeight ? "auto" : "hidden"
+    setIsComposerStacked(element.value.includes("\n") || nextHeight > 44)
+  }
+
+  const handlePromptChange = (value: string) => {
+    setPrompt(value)
+    requestAnimationFrame(() => resizeTextarea())
   }
 
   const applyTemplateSelection = (template: TemplateOption, announce = true) => {
@@ -1354,6 +1394,46 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
     }
   }
 
+  const clearConversationWorkspace = () => {
+    setMessages([])
+    setPrompt("")
+    setSelectedTemplate(null)
+    setTemplateData(null)
+    setThemeState(null)
+    setDishOrder(["one", "two"])
+    setEmailEntries([])
+    setComposerMode("prompt")
+    setWorkflowState("INTENT_CAPTURE")
+    setIsPreviewOpen(false)
+    setIsEditorOpen(false)
+  }
+
+  const applySessionToUi = (session: ChatSessionSummary, options?: { injectSummaryMessage?: boolean }) => {
+    setConversationId(session.conversationId)
+    setWorkflowState(session.state || "INTENT_CAPTURE")
+    setComposerMode(session.state === "AUDIENCE_COLLECTION" || session.state === "VALIDATION_REVIEW" ? "emails" : "prompt")
+
+    if (session.selectedTemplateId) {
+      const template = templateOptions.find((entry) => entry.id === session.selectedTemplateId)
+      if (template) {
+        applyTemplateSelection(template, false)
+      }
+    } else {
+      setSelectedTemplate(null)
+      setTemplateData(null)
+      setThemeState(null)
+    }
+
+    if (options?.injectSummaryMessage) {
+      const summary = session.summary?.trim()
+      setMessages(
+        summary
+          ? [{ id: Date.now(), role: "bot", text: summary }]
+          : [{ id: Date.now(), role: "bot", text: "Conversation loaded. Tell me what you want to do next." }],
+      )
+    }
+  }
+
   useEffect(() => {
     resizeTextarea()
   }, [prompt])
@@ -1368,9 +1448,8 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
 
   useEffect(() => {
     if (initializedFromTemplateRef.current) return
-    const templateId = searchParams.get("template")
-    if (!templateId) return
-    const template = templateOptions.find((item) => item.id === templateId)
+    if (!templateParam) return
+    const template = templateOptions.find((item) => item.id === templateParam)
     if (!template) return
 
     initializedFromTemplateRef.current = true
@@ -1379,7 +1458,7 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
       ...prev,
       { id: Date.now(), role: "bot", text: selectedTemplateNotice(template.name), kind: "templateReview" },
     ])
-  }, [searchParams])
+  }, [templateParam])
 
   useEffect(() => {
     if (!conversationId) return
@@ -1390,72 +1469,112 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
     }
   }, [conversationId])
 
+  const loadSessionSnapshot = async (targetConversationId?: string | null) => {
+    const query = targetConversationId ? `?conversationId=${encodeURIComponent(targetConversationId)}` : ""
+    const response = await fetch(`/api/ai/session${query}`, {
+      method: "GET",
+      cache: "no-store",
+    })
+    if (!response.ok) return null
+
+    const payload = (await response.json()) as {
+      session?: ChatSessionSummary | null
+    }
+
+    return payload.session ?? null
+  }
+
+  const startNewConversation = async () => {
+    if (isAiResponding) return
+    const newConversationId =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `conv-${Date.now().toString(36)}`
+
+    const response = await fetch("/api/ai/session", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        conversationId: newConversationId,
+      }),
+    })
+
+    if (!response.ok) return
+    const payload = (await response.json()) as {
+      session?: ChatSessionSummary | null
+    }
+    clearConversationWorkspace()
+    if (payload.session) {
+      applySessionToUi(payload.session)
+    } else {
+      setConversationId(newConversationId)
+    }
+    router.replace("/chat")
+  }
+
   useEffect(() => {
     let cancelled = false
 
     const hydrateSession = async () => {
       try {
         const fromStorage = window.sessionStorage.getItem("bm_ai_conversation_id")
-        if (fromStorage && !cancelled) setConversationId(fromStorage)
+        const preferredConversationId = conversationIdParam || fromStorage || null
+        const shouldCreateNewChat = newChatParam === "1"
 
-        const response = await fetch("/api/ai/session", {
-          method: "GET",
-          cache: "no-store",
-        })
-        if (!response.ok) return
-        const payload = (await response.json()) as {
-          session?: {
-            conversationId?: string
-            state?: string
-            selectedTemplateId?: string | null
-            summary?: string | null
-          } | null
+        if (shouldCreateNewChat) {
+          await startNewConversation()
+          return
         }
-        const session = payload.session
-        if (!session || cancelled) return
 
-        if (session.conversationId) {
-          setConversationId(session.conversationId)
-        }
-        if (session.state) {
-          setWorkflowState(session.state)
-          if (session.state === "AUDIENCE_COLLECTION" || session.state === "VALIDATION_REVIEW") {
-            setComposerMode("emails")
+        let session: ChatSessionSummary | null = null
+        if (!templateParam) {
+          session = await loadSessionSnapshot(preferredConversationId)
+          if (!session && preferredConversationId) {
+            session = await loadSessionSnapshot(null)
           }
+        } else {
+          await loadSessionSnapshot(preferredConversationId)
         }
-        if (session.selectedTemplateId) {
-          const template = templateOptions.find((entry) => entry.id === session.selectedTemplateId)
-          if (template) applyTemplateSelection(template, false)
-        }
-        if (session.state && session.state !== "INTENT_CAPTURE") {
-          setMessages((prev) => {
-            if (prev.length > 0) return prev
-            return [
-              ...prev,
-              {
-                id: Date.now(),
-                role: "bot",
-                text: "Welcome back. Ready to continue your email campaign?",
-              },
-            ]
-          })
+
+        if (session && !cancelled) {
+          applySessionToUi(session)
         }
       } catch {
         // Ignore hydration failures.
       }
     }
 
-    hydrateSession()
+    void hydrateSession()
 
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [conversationIdParam, newChatParam, templateParam])
 
   const sendPrompt = async () => {
     const value = prompt.trim()
     if (!value) return
     if (isAiResponding) return
+    if (isOutOfCredits) {
+      const creditsMessage = isProUserPlan
+        ? "You've used your monthly AI token budget. Your budget resets at the start of next month."
+        : "You've used all your AI tokens for this period. Upgrade to Pro for a larger monthly budget."
+      setMessages((prev) => {
+        const lastMessage = prev[prev.length - 1]
+        if (lastMessage?.role === "bot" && lastMessage.text === creditsMessage) return prev
+        return [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            role: "bot",
+            text: creditsMessage,
+          },
+        ]
+      })
+      return
+    }
 
     if (composerMode === "emails") {
       const parsed = parseEmailEntries(value)
@@ -1483,6 +1602,10 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
     setMessages((prev) => [...prev, userMessage, { id: assistantMessageId, role: "bot", text: "" }])
     setPrompt("")
 
+    const chosenModel = modelChoices.find((option) => option.id === selectedModelChoice) ?? modelChoices[0]
+    const resolvedMode = !isProUserPlan && chosenModel.requiresPro ? "essential" : chosenModel.mode
+    let activeConversationId = conversationId
+
     setIsAiResponding(true)
     try {
       const response = await fetch("/api/ai/stream", {
@@ -1493,6 +1616,7 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
         body: JSON.stringify({
           prompt: value,
           conversationId: conversationId ?? undefined,
+          mode: resolvedMode,
         }),
       })
 
@@ -1541,6 +1665,7 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
           if (!event) continue
 
           if (event.type === "session") {
+            activeConversationId = event.conversationId
             setConversationId(event.conversationId)
             setWorkflowState(event.state)
             continue
@@ -1597,6 +1722,7 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
 
           if (event.type === "done") {
             doneState = event.state
+            activeConversationId = event.conversationId
             setConversationId(event.conversationId)
             setWorkflowState(event.state)
 
@@ -1644,7 +1770,7 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
         const campaignId = pendingCampaignId ?? `cmp-${Date.now().toString().slice(-8)}`
         const validAudience = computeValidationStats(emailEntries).valid
         router.push(
-          `/activity?campaign=${campaignId}&template=${encodeURIComponent(
+          `/campaigns?campaign=${campaignId}&template=${encodeURIComponent(
             selectedTemplate?.name ?? "Campaign",
           )}&audience=${validAudience}`,
         )
@@ -1780,17 +1906,125 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
       {
         id: Date.now(),
         role: "bot",
-        text: `Campaign queued. Redirecting to activity. Queue ID: ${campaignId}`,
+        text: `Campaign queued. Opening campaigns workspace. Queue ID: ${campaignId}`,
       },
     ])
     setComposerMode("prompt")
-    router.push(`/activity?campaign=${campaignId}&template=${encodeURIComponent(selectedTemplate.name)}&audience=${stats.valid}`)
+    router.push(`/campaigns?campaign=${campaignId}&template=${encodeURIComponent(selectedTemplate.name)}&audience=${stats.valid}`)
   }
 
   const showHero = messages.length === 0 && workflowState === "INTENT_CAPTURE" && !isAiResponding
+  const canUploadCsv = composerMode === "emails" && !isCsvProcessing && !isOutOfCredits
+
+  const renderUploadButton = (disabled: boolean) => (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => csvFileInputRef.current?.click()}
+      className={cn(
+        "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-lg leading-none transition",
+        !disabled ? "bg-zinc-950 text-zinc-100 hover:bg-zinc-900" : "cursor-not-allowed bg-zinc-950/55 text-zinc-600",
+      )}
+      aria-label="Upload CSV recipients"
+    >
+      +
+    </button>
+  )
+
+  const remainingBudget = aiCredits.remainingBudgetUsd
+  const monthlyBudget = aiCredits.monthlyBudgetUsd
+
+  const expenseDotColor = (tier?: "low" | "medium" | "high") => {
+    if (tier === "high") return "bg-rose-400"
+    if (tier === "medium") return "bg-amber-400"
+    return "bg-emerald-400"
+  }
+
+  const formatMicroCost = (usd?: number) => {
+    if (!usd || usd <= 0) return "free"
+    if (usd < 0.001) return `~$${(usd * 1000).toFixed(2)}/1K msgs`
+    if (usd < 0.01) return `~$${(usd * 100).toFixed(1)}¢/msg`
+    return `~$${usd.toFixed(3)}/msg`
+  }
+
+  const estimateRemainingMsgs = (costPerMsg?: number) => {
+    if (!costPerMsg || costPerMsg <= 0 || remainingBudget <= 0) return 0
+    return Math.floor(remainingBudget / costPerMsg)
+  }
+
+  const budgetPercent = monthlyBudget > 0 ? Math.max(0, Math.min(100, (remainingBudget / monthlyBudget) * 100)) : 0
+
+  const renderModeSelector = () => {
+    const activeChoice = modelChoices.find((c) => c.id === selectedModelChoice) ?? modelChoices[0]
+
+    return (
+      <div className="relative shrink-0">
+        <select
+          value={isProUserPlan ? selectedModelChoice : "essential"}
+          onChange={(event) => {
+            const nextId = event.target.value
+            const nextChoice = modelChoices.find((choice) => choice.id === nextId)
+            if (nextChoice?.requiresPro && !isProUserPlan) {
+              setSelectedModelChoice("essential")
+              return
+            }
+            setSelectedModelChoice(nextId)
+          }}
+          disabled={isOutOfCredits}
+          className="h-9 max-w-[46vw] appearance-none rounded-full bg-zinc-950/80 pl-3.5 pr-10 text-[11px] font-medium text-zinc-200 outline-none transition hover:bg-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-500 sm:max-w-[220px]"
+          aria-label="AI model"
+        >
+          {modelChoices.map((choice) => {
+            const locked = !isProUserPlan && choice.requiresPro
+            const msgs = estimateRemainingMsgs(choice.estimatedCostPerMessage)
+            return (
+              <option
+                key={choice.id}
+                value={choice.id}
+                disabled={locked}
+                className="bg-zinc-950 text-zinc-100"
+              >
+                {choice.label}
+                {locked ? " (Pro)" : ` · ${formatMicroCost(choice.estimatedCostPerMessage)}`}
+                {!locked && msgs > 0 ? ` · ~${msgs} left` : ""}
+              </option>
+            )
+          })}
+        </select>
+        <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1.5 rounded-full bg-zinc-800/80 px-1.5 py-1">
+          <span className={cn("h-1.5 w-1.5 rounded-full", expenseDotColor(activeChoice.expenseTier))} />
+          <ChevronDown className="h-3 w-3 text-zinc-400" />
+        </span>
+      </div>
+    )
+  }
+
+  const renderFreeUpgradeCta = () => {
+    if (!isProUserPlan) {
+      return (
+        <Button
+          type="button"
+          onClick={() => router.push("/pricing")}
+          className="h-9 shrink-0 rounded-full bg-zinc-100 px-4 text-xs font-semibold text-zinc-900 hover:bg-zinc-200"
+        >
+          {isOutOfCredits ? "Upgrade" : "Unlock Pro"}
+        </Button>
+      )
+    }
+    return (
+      <span className="shrink-0 rounded-full bg-zinc-950/70 px-3 py-1.5 text-[10px] text-zinc-400">
+        ${remainingBudget.toFixed(2)} / ${monthlyBudget.toFixed(2)} left
+      </span>
+    )
+  }
 
   const composer = (
-    <div className={cn("rounded-[28px] border border-zinc-800/80 bg-transparent px-3 py-2", showHero ? "w-full max-w-4xl" : "")}>
+    <div
+      className={cn(
+        "rounded-[30px] bg-zinc-900/55 px-4 py-3 shadow-[0_18px_44px_-24px_rgba(0,0,0,0.9)] ring-1 ring-zinc-700/60 backdrop-blur-xl",
+        showHero ? "w-full max-w-4xl" : "",
+      )}
+    >
       <input
         ref={csvFileInputRef}
         type="file"
@@ -1798,40 +2032,61 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
         className="hidden"
         onChange={(event) => processCsvFile(event.target.files?.[0] ?? null)}
       />
-      <div className="flex items-end gap-2">
-        <button
-          type="button"
-          disabled={composerMode !== "emails" || isCsvProcessing}
-          onClick={() => csvFileInputRef.current?.click()}
-          className={cn(
-            "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-lg leading-none transition",
-            composerMode === "emails" && !isCsvProcessing
-              ? "bg-zinc-900 text-zinc-100 hover:bg-zinc-800"
-              : "cursor-not-allowed bg-zinc-900/50 text-zinc-600",
-          )}
-          aria-label="Upload CSV recipients"
-        >
-          +
-        </button>
+      <div className={cn("flex gap-3 transition-all duration-300 ease-out", isComposerStacked ? "items-start" : "items-center")}>
+        {!isComposerStacked ? renderUploadButton(!canUploadCsv) : null}
         <textarea
           ref={textareaRef}
           value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
+          onChange={(event) => handlePromptChange(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault()
               sendPrompt()
             }
           }}
-          placeholder={composerMode === "emails" ? chatCopy.emailInputPlaceholder : chatCopy.promptPlaceholder}
+          placeholder={
+            isOutOfCredits
+              ? "Monthly token budget exhausted. Resets next month."
+              : composerMode === "emails"
+                ? chatCopy.emailInputPlaceholder
+                : chatCopy.promptPlaceholder
+          }
           rows={1}
-          className="scrollbar-hide w-full resize-none bg-transparent py-2 text-sm leading-[1.45] text-zinc-100 placeholder:text-zinc-500 focus:outline-none md:text-base"
+          disabled={isOutOfCredits}
+          className="scrollbar-hide min-h-[28px] max-h-[132px] w-full resize-none bg-transparent py-2.5 text-sm leading-6 text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:text-zinc-500 md:text-[15px]"
         />
+        {!isComposerStacked ? renderModeSelector() : null}
+        {!isComposerStacked ? renderFreeUpgradeCta() : null}
       </div>
-      {!showHero ? (
-        <p className="px-1 pb-1 text-[11px] text-zinc-500">
-          {composerMode === "emails" ? "Enter to validate recipients • Shift+Enter for new line" : "Enter to send • Shift+Enter for new line"}
-        </p>
+      <div
+        className={cn(
+          "overflow-hidden transition-all duration-300 ease-out",
+          isComposerStacked ? "mt-2 max-h-12 opacity-100" : "max-h-0 opacity-0",
+        )}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            {renderUploadButton(!canUploadCsv)}
+            {renderModeSelector()}
+          </div>
+          {renderFreeUpgradeCta()}
+        </div>
+      </div>
+      {isOutOfCredits ? (
+        <div className="mt-2 flex items-center justify-between rounded-xl bg-zinc-950/70 px-3 py-2 text-xs">
+          <span className="text-zinc-400">Monthly token budget used up.</span>
+          {!isProUserPlan ? (
+            <button
+              type="button"
+              onClick={() => router.push("/pricing")}
+              className="font-medium text-cyan-300 transition hover:text-cyan-200"
+            >
+              Upgrade Plan
+            </button>
+          ) : (
+            <span className="text-zinc-500">Resets next month</span>
+          )}
+        </div>
       ) : null}
     </div>
   )
@@ -1873,7 +2128,9 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
                                 .map((id) => templateOptions.find((template) => template.id === id))
                                 .filter((template): template is TemplateOption => Boolean(template))
                             : templateOptions
-                          ).map((template) => {
+                          )
+                            .filter((template) => isProUserPlan || template.accessTier !== "pro")
+                            .map((template) => {
                             const selected = selectedTemplate?.id === template.id
                             return (
                               <TemplateSuggestionCard
@@ -1947,7 +2204,7 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
               ))}
 
               {isCsvProcessing ? <CsvSheetSkeleton /> : null}
-              {isAiResponding ? <ActivityBubble label="AI is thinking" /> : null}
+              {isAiResponding ? <AssistantSignal /> : null}
             </div>
 
             <div className="p-3 pt-0 md:p-4 md:pt-0">{composer}</div>

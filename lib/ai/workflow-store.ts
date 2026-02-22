@@ -196,3 +196,77 @@ export async function getLatestWorkflowSession(userId: string) {
   }
 }
 
+export async function getWorkflowSessionByConversationId(input: { userId: string; conversationId: string }) {
+  const now = new Date()
+  const found = await prisma.aiWorkflowSession.findFirst({
+    where: {
+      userId: input.userId,
+      conversationId: input.conversationId,
+      archivedAt: null,
+      expiresAt: { gt: now },
+    },
+    orderBy: { updatedAt: "desc" },
+    include: {
+      checkpoints: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+      },
+    },
+  })
+
+  if (!found) return null
+
+  return {
+    session: mapSessionEntity(found, true),
+    lastCheckpoint: found.checkpoints[0] ?? null,
+  }
+}
+
+export type WorkflowSessionListItem = {
+  conversationId: string
+  state: WorkflowMachineState["state"]
+  intent: WorkflowMachineState["intent"]
+  selectedTemplateId: string | null
+  summary: string | null
+  context: WorkflowMachineState["context"]
+  recipientStats: WorkflowMachineState["recipientStats"]
+  lastActivityAt: Date
+  createdAt: Date
+}
+
+export async function listWorkflowSessions(input: { userId: string; limit?: number }): Promise<WorkflowSessionListItem[]> {
+  const now = new Date()
+  const limit = Math.min(Math.max(input.limit ?? 25, 1), 100)
+  const sessions = await prisma.aiWorkflowSession.findMany({
+    where: {
+      userId: input.userId,
+      archivedAt: null,
+      expiresAt: { gt: now },
+    },
+    orderBy: { lastActivityAt: "desc" },
+    take: limit,
+  })
+
+  return sessions.map((session) => {
+    const hydrated = hydrateMachineState({
+      state: session.state,
+      intent: session.intent,
+      selectedTemplateId: session.selectedTemplateId,
+      recipientStats: session.recipientStats as WorkflowMachineState["recipientStats"],
+      summary: session.summary,
+      context: (session.contextJson as WorkflowMachineState["context"] | null) ?? {},
+    })
+
+    return {
+      conversationId: session.conversationId,
+      state: hydrated.state,
+      intent: hydrated.intent,
+      selectedTemplateId: session.selectedTemplateId,
+      summary: session.summary,
+      context: hydrated.context,
+      recipientStats: hydrated.recipientStats,
+      lastActivityAt: session.lastActivityAt,
+      createdAt: session.createdAt,
+    }
+  })
+}
