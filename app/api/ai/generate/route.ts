@@ -24,6 +24,11 @@ export async function POST(request: Request) {
   const body = (await request.json()) as {
     prompt?: string
     system?: string
+    /** Quality mode: fast | boost | max */
+    qualityMode?: string
+    /** Specific model registry ID within the quality mode */
+    specificModel?: string
+    /** @deprecated Use qualityMode instead */
     mode?: string
     model?: string
     provider?: string
@@ -44,9 +49,8 @@ export async function POST(request: Request) {
       userPlan: session.user.plan,
       prompt,
       conversationId: body.conversationId,
-      mode: normalizeAiModelMode(body.mode),
-      model: body.model,
-      provider: body.provider,
+      qualityMode: body.qualityMode ?? body.mode,
+      specificModel: body.specificModel,
       system: body.system,
     })) {
       if (event.type === "session") {
@@ -70,6 +74,8 @@ export async function POST(request: Request) {
       templateSuggestions: doneEvent.templateSuggestions ?? [],
       recipientStats: doneEvent.recipientStats ?? null,
       campaignId: doneEvent.campaignId ?? null,
+      estimatedCostEur: doneEvent.estimatedCostEur ?? null,
+      budgetDowngraded: doneEvent.budgetDowngraded ?? false,
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : "AI generation failed"

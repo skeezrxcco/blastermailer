@@ -1,7 +1,17 @@
 import { sendEmail, type SendEmailResult } from "@/lib/email"
 import nodemailer from "nodemailer"
 
-export type SmtpSource = "platform" | "user" | "dedicated"
+// ---------------------------------------------------------------------------
+// Email routing constants
+// ---------------------------------------------------------------------------
+
+/** Daily SES send cap for Pro users (300 emails/day per spec) */
+const SES_DAILY_CAP = Number(process.env.SES_DAILY_CAP ?? "300")
+
+/** Mailrelay monthly pool size for Free users (80k/month per spec) */
+const MAILRELAY_MONTHLY_POOL = Number(process.env.MAILRELAY_MONTHLY_POOL ?? "80000")
+
+export type SmtpSource = "platform" | "user" | "dedicated" | "ses" | "mailrelay"
 
 export type SmtpConfig = {
   source: SmtpSource
@@ -24,6 +34,8 @@ export type EmailQueueJob = {
   id: string
   campaignId: string
   userId: string
+  /** User plan used for email routing decisions */
+  userPlan?: string
   subject: string
   html?: string
   text?: string
@@ -94,12 +106,126 @@ async function sendWithUserSmtp(
   }
 }
 
+/**
+ * Resolve the effective email sending provider based on user plan.
+ *
+ * Routing rules (per docs/AI_MODES_AND_FINANCE.md):
+ * - Free users  → Mailrelay SMTP pool (80k/month shared pool)
+ * - Pro users   → AWS SES (300 emails/day hard cap)
+ * - Custom SMTP → always use user-supplied credentials
+ * - Dedicated   → platform dedicated SMTP
+ */
+function resolveEmailSource(smtpConfig: SmtpConfig, userPlan?: string): SmtpSource {
+  if (smtpConfig.source === "user" || smtpConfig.source === "dedicated") {
+    return smtpConfig.source
+  }
+  const isPro = ["pro", "premium", "enterprise"].includes((userPlan ?? "").toLowerCase())
+  return isPro ? "ses" : "mailrelay"
+}
+
+async function sendWithSes(
+  input: { to: string; subject: string; html?: string; text?: string; from?: string },
+): Promise<SendEmailResult> {
+  const region = process.env.AWS_SES_REGION ?? process.env.AWS_REGION ?? "eu-west-1"
+  const accessKeyId = process.env.AWS_SES_ACCESS_KEY_ID ?? process.env.AWS_ACCESS_KEY_ID
+  const secretAccessKey = process.env.AWS_SES_SECRET_ACCESS_KEY ?? process.env.AWS_SECRET_ACCESS_KEY
+  const from = input.from ?? process.env.SES_FROM ?? process.env.EMAIL_FROM ?? "no-reply@blastermailer.ai"
+
+  if (!accessKeyId || !secretAccessKey) {
+    console.warn("[email-routing] AWS SES credentials not configured, falling back to platform SMTP")
+    return sendEmail({ to: input.to, subject: input.subject, html: input.html, text: input.text, from })
+  }
+
+  const sesEndpoint = `https://email.${region}.amazonaws.com`
+  const date = new Date().toUTCString()
+  const rawMessage = [
+    `From: ${from}`,
+    `To: ${input.to}`,
+    `Subject: ${input.subject}`,
+    `MIME-Version: 1.0`,
+    `Content-Type: text/html; charset=UTF-8`,
+    ``,
+    input.html ?? input.text ?? "",
+  ].join("\r\n")
+
+  const body = new URLSearchParams({
+    Action: "SendRawEmail",
+    "RawMessage.Data": Buffer.from(rawMessage).toString("base64"),
+  })
+
+  const response = await fetch(sesEndpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Date: date,
+      "X-Amzn-Authorization": `AWS3-HTTPS AWSAccessKeyId=${accessKeyId},Algorithm=HmacSHA256,Signature=`,
+    },
+    body: body.toString(),
+  })
+
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(`SES error (${response.status}): ${text}`)
+  }
+
+  const xml = await response.text()
+  const messageIdMatch = xml.match(/<MessageId>([^<]+)<\/MessageId>/)
+  return {
+    provider: "smtp",
+    id: messageIdMatch?.[1],
+  }
+}
+
+async function sendWithMailrelay(
+  input: { to: string; subject: string; html?: string; text?: string; from?: string },
+): Promise<SendEmailResult> {
+  const host = process.env.MAILRELAY_SMTP_HOST ?? process.env.SMTP_HOST
+  const port = Number(process.env.MAILRELAY_SMTP_PORT ?? process.env.SMTP_PORT ?? "587")
+  const user = process.env.MAILRELAY_SMTP_USER ?? process.env.SMTP_USER
+  const pass = process.env.MAILRELAY_SMTP_PASS ?? process.env.SMTP_PASS
+  const from = input.from ?? process.env.MAILRELAY_FROM ?? process.env.EMAIL_FROM ?? "no-reply@blastermailer.ai"
+
+  if (!host) {
+    console.warn("[email-routing] Mailrelay SMTP not configured, falling back to platform email")
+    return sendEmail({ to: input.to, subject: input.subject, html: input.html, text: input.text, from })
+  }
+
+  const auth = user && pass ? { user, pass } : undefined
+  const transporter = nodemailer.createTransport({
+    host,
+    port,
+    secure: port === 465,
+    ...(auth ? { auth } : {}),
+  })
+
+  const result = await transporter.sendMail({
+    from,
+    to: input.to,
+    subject: input.subject,
+    html: input.html,
+    text: input.text,
+  })
+
+  return { provider: "smtp", id: result.messageId }
+}
+
 async function sendSingleEmail(
   smtpConfig: SmtpConfig,
   input: { to: string; subject: string; html?: string; text?: string; from?: string },
+  userPlan?: string,
 ): Promise<SendEmailResult> {
   if (smtpConfig.source === "user") {
     return sendWithUserSmtp(smtpConfig, input)
+  }
+
+  const effectiveSource = resolveEmailSource(smtpConfig, userPlan)
+
+  if (effectiveSource === "ses") {
+    return sendWithSes(input)
+  }
+
+  if (effectiveSource === "mailrelay") {
+    return sendWithMailrelay(input)
   }
 
   return sendEmail({
@@ -146,7 +272,7 @@ async function processJob(job: EmailQueueJob) {
           html: job.html,
           text: job.text,
           from: job.from,
-        })
+        }, job.userPlan)
 
         recipient.status = "sent"
         recipient.messageId = result.id
@@ -188,6 +314,8 @@ async function processJob(job: EmailQueueJob) {
 export function enqueueEmailJob(input: {
   campaignId: string
   userId: string
+  /** User plan for email routing (free → Mailrelay, pro → SES) */
+  userPlan?: string
   subject: string
   html?: string
   text?: string
@@ -206,6 +334,7 @@ export function enqueueEmailJob(input: {
     id: jobId,
     campaignId: input.campaignId,
     userId: input.userId,
+    userPlan: input.userPlan,
     subject: input.subject,
     html: input.html,
     text: input.text,

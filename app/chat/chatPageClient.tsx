@@ -66,13 +66,21 @@ type EditorChatMessage = {
   text: string
 }
 
+type AiQualityMode = "fast" | "boost" | "max"
+
 type ModelChoice = {
   id: string
   label: string
   shortLabel: string
-  mode: "essential" | "balanced" | "premium"
+  mode: AiQualityMode
   requiresPro?: boolean
   quotaMultiplier: number
+}
+
+type SpecificModelOption = {
+  id: string
+  label: string
+  mode: AiQualityMode
 }
 
 type ChatSessionSummary = {
@@ -144,9 +152,21 @@ const viewportSpecs: Record<PreviewMode, { label: string; width: number; height:
 }
 
 const modelChoices: ModelChoice[] = [
-  { id: "essential", label: "Fast", shortLabel: "Fast", mode: "essential", quotaMultiplier: 1 },
-  { id: "balanced", label: "Powerful", shortLabel: "Powerful", mode: "balanced", requiresPro: true, quotaMultiplier: 3 },
-  { id: "premium", label: "Max", shortLabel: "Max", mode: "premium", requiresPro: true, quotaMultiplier: 8 },
+  { id: "fast", label: "Fast", shortLabel: "Fast", mode: "fast", quotaMultiplier: 1 },
+  { id: "boost", label: "Boost", shortLabel: "Boost", mode: "boost", requiresPro: true, quotaMultiplier: 3 },
+  { id: "max", label: "Max", shortLabel: "Max", mode: "max", requiresPro: true, quotaMultiplier: 8 },
+]
+
+const specificModelOptions: SpecificModelOption[] = [
+  { id: "fast-gemini-15-flash", label: "Gemini 1.5 Flash", mode: "fast" },
+  { id: "fast-gemini-2-flash", label: "Gemini 2.0 Flash", mode: "fast" },
+  { id: "fast-openrouter-gpt35", label: "GPT-3.5 Turbo", mode: "fast" },
+  { id: "fast-openrouter-claude-haiku", label: "Claude Haiku", mode: "fast" },
+  { id: "boost-gemini-pro", label: "Gemini 2.0 Pro", mode: "boost" },
+  { id: "boost-openrouter-gpt4o", label: "GPT-4o", mode: "boost" },
+  { id: "boost-openrouter-claude-sonnet", label: "Claude 3.5 Sonnet", mode: "boost" },
+  { id: "max-gemini-25-flash", label: "Gemini 2.5 Flash", mode: "max" },
+  { id: "max-openrouter-claude-opus", label: "Claude 3 Opus", mode: "max" },
 ]
 
 function looksLikeEmail(value: string) {
@@ -603,7 +623,7 @@ function AnimatedBotText({ text }: { text: string }) {
   return (
     <p className="whitespace-pre-wrap wrap-break-word leading-relaxed">
       {visible}
-      {isTyping ? <span className="ml-0.5 inline-block h-4 w-[1px] animate-pulse bg-zinc-300 align-middle" /> : null}
+      {isTyping ? <span className="ml-0.5 inline-block h-4 w-px animate-pulse bg-zinc-300 align-middle" /> : null}
     </p>
   )
 }
@@ -1316,7 +1336,7 @@ function TemplateEditorModal({
         </div>
       </div>
       {imageTarget ? (
-        <div className="fixed inset-0 z-[60] bg-black/70 p-4 backdrop-blur-sm" onClick={closeImageEditor}>
+        <div className="fixed inset-0 z-60 bg-black/70 p-4 backdrop-blur-sm" onClick={closeImageEditor}>
           <div className="mx-auto mt-16 w-full max-w-lg rounded-2xl bg-zinc-950/95 p-4" onClick={(event) => event.stopPropagation()}>
             <p className="text-sm font-medium text-zinc-100">Update image</p>
             <p className="mt-1 text-xs text-zinc-400">Upload a file, paste an image URL, or generate with AI prompt.</p>
@@ -1398,7 +1418,9 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
   const [isAiResponding, setIsAiResponding] = useState(false)
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [workflowState, setWorkflowState] = useState<string>("INTENT_CAPTURE")
-  const [selectedModelChoice, setSelectedModelChoice] = useState<string>("essential")
+  const [selectedModelChoice, setSelectedModelChoice] = useState<string>("fast")
+  const [isModelMenuOpen, setIsModelMenuOpen] = useState(false)
+  const [hoveredModeId, setHoveredModeId] = useState<string | null>(null)
   const [isComposerStacked, setIsComposerStacked] = useState(false)
   const isPaidPlan = initialUser.plan === "pro" || initialUser.plan === "premium" || initialUser.plan === "enterprise"
   const aiQuota = useAiCredits()
@@ -1654,7 +1676,7 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
     setPrompt("")
 
     const chosenModel = modelChoices.find((option) => option.id === selectedModelChoice) ?? modelChoices[0]
-    const resolvedMode = !isPaidPlan && chosenModel.requiresPro ? "essential" : chosenModel.mode
+    const resolvedMode: AiQualityMode = !isPaidPlan && chosenModel.requiresPro ? "fast" : chosenModel.mode
     let activeConversationId = conversationId
 
     void persistMessage({ role: "USER", content: value, conversationId: activeConversationId })
@@ -1669,7 +1691,7 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
         body: JSON.stringify({
           prompt: value,
           conversationId: conversationId ?? undefined,
-          mode: resolvedMode,
+          qualityMode: resolvedMode,
         }),
       })
 
@@ -2083,37 +2105,107 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
 
   const renderModeSelector = () => {
     const activeChoice = modelChoices.find((c) => c.id === selectedModelChoice) ?? modelChoices[0]
+    const hoveredMode = hoveredModeId ? modelChoices.find((c) => c.id === hoveredModeId) : null
+
+    const getModeDescription = (mode: AiQualityMode) => {
+      if (mode === "fast") return "Quick responses for simple tasks"
+      if (mode === "boost") return "Balanced quality and speed"
+      if (mode === "max") return "Maximum intelligence for complex work"
+      return ""
+    }
+
+    const getModeProvider = (mode: AiQualityMode) => {
+      if (mode === "fast") return "Gemini 2.0 Flash"
+      if (mode === "boost") return "Gemini 2.0 Pro"
+      if (mode === "max") return "Claude Opus 4.6"
+      return ""
+    }
+
+    const getModePricing = (mode: AiQualityMode) => {
+      if (mode === "fast") return { input: "$0.10/1M", output: "$0.40/1M" }
+      if (mode === "boost") return { input: "$1.25/1M", output: "$5.00/1M" }
+      if (mode === "max") return { input: "$5/1M", output: "$25/1M" }
+      return { input: "", output: "" }
+    }
 
     return (
-      <div className="relative shrink-0">
-        <select
-          value={isPaidPlan ? selectedModelChoice : "essential"}
-          onChange={(event) => {
-            const nextId = event.target.value
-            const nextChoice = modelChoices.find((choice) => choice.id === nextId)
-            if (nextChoice?.requiresPro && !isPaidPlan) {
-              setSelectedModelChoice("essential")
-              return
-            }
-            setSelectedModelChoice(nextId)
-          }}
+      <div
+        className="relative shrink-0"
+        onMouseEnter={() => setIsModelMenuOpen(true)}
+        onMouseLeave={() => {
+          setIsModelMenuOpen(false)
+          setHoveredModeId(null)
+        }}
+      >
+        <button
+          type="button"
           disabled={isOutOfCredits}
-          className="h-9 max-w-[46vw] appearance-none rounded-full bg-zinc-950/80 pl-3.5 pr-10 text-[11px] font-medium text-zinc-200 outline-none transition hover:bg-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-500 sm:max-w-[200px]"
+          className="flex h-9 items-center gap-1.5 rounded-full bg-zinc-950/80 pl-3.5 pr-3 text-[11px] font-medium text-zinc-200 outline-none transition hover:bg-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-500"
           aria-label="AI model"
+          aria-haspopup="true"
+          aria-expanded={isModelMenuOpen}
         >
-          {modelChoices.map((choice) => {
-            const locked = !isPaidPlan && choice.requiresPro
-            return (
-              <option key={choice.id} value={choice.id} disabled={locked} className="bg-zinc-950 text-zinc-100">
-                {choice.label} · {choice.quotaMultiplier}x{locked ? " (Pro)" : ""}
-              </option>
-            )
-          })}
-        </select>
-        <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1 rounded-full bg-zinc-800/80 px-1.5 py-1">
-          <span className="text-[10px] font-medium text-zinc-400">{activeChoice.quotaMultiplier}x</span>
-          <ChevronDown className="h-3 w-3 text-zinc-400" />
-        </span>
+          <span>{activeChoice.label}</span>
+          <span className="flex items-center gap-0.5 rounded-full bg-zinc-800/80 px-1.5 py-0.5">
+            <span className="text-[10px] font-medium text-zinc-400">{activeChoice.quotaMultiplier}x</span>
+            <ChevronDown className="h-3 w-3 text-zinc-400" />
+          </span>
+        </button>
+
+        {isModelMenuOpen && !isOutOfCredits ? (
+          <>
+            <div className="absolute bottom-full left-0 mb-1.5 w-44 rounded-2xl border border-zinc-800/60 bg-zinc-950/95 p-1.5 shadow-2xl backdrop-blur-xl">
+              {modelChoices.map((choice) => {
+                const locked = !isPaidPlan && choice.requiresPro
+                const isActive = selectedModelChoice === choice.id
+                return (
+                  <button
+                    key={choice.id}
+                    type="button"
+                    disabled={locked}
+                    onMouseEnter={() => setHoveredModeId(choice.id)}
+                    onClick={() => {
+                      if (locked) return
+                      setSelectedModelChoice(choice.id)
+                      setIsModelMenuOpen(false)
+                      setHoveredModeId(null)
+                    }}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm transition",
+                      isActive
+                        ? "bg-zinc-800/80 text-zinc-100"
+                        : locked
+                          ? "cursor-not-allowed text-zinc-600"
+                          : "text-zinc-300 hover:bg-zinc-800/50 hover:text-zinc-100",
+                    )}
+                  >
+                    <span className="flex h-5 w-5 items-center justify-center rounded-md border border-zinc-700 bg-zinc-900">
+                      {isActive ? <Check className="h-3 w-3 text-sky-400" /> : null}
+                    </span>
+                    <span className="flex-1 font-medium">{choice.label}</span>
+                    {locked ? <span className="text-[10px] text-zinc-600">Pro</span> : null}
+                  </button>
+                )
+              })}
+            </div>
+
+            {hoveredMode && !hoveredMode.requiresPro || (hoveredMode?.requiresPro && isPaidPlan) ? (
+              <div className="pointer-events-none absolute bottom-full left-48 mb-1.5 w-80 rounded-2xl border border-zinc-800/60 bg-zinc-950/95 p-4 shadow-2xl backdrop-blur-xl">
+                <div className="mb-2 text-sm font-semibold text-zinc-100">
+                  {getModeDescription(hoveredMode.mode)}
+                </div>
+                <div className="mb-3 flex items-center gap-1.5 text-xs text-zinc-400">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span>Powered by {getModeProvider(hoveredMode.mode)}</span>
+                </div>
+                <div className="space-y-1 text-xs text-zinc-500">
+                  <div>{getModePricing(hoveredMode.mode).input} Input Tokens</div>
+                  <div>{getModePricing(hoveredMode.mode).output} Output Tokens</div>
+                </div>
+              </div>
+            ) : null}
+          </>
+        ) : null}
       </div>
     )
   }

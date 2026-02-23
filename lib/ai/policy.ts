@@ -1,6 +1,6 @@
 import type { GenerateAiTextInput } from "@/lib/ai"
 
-export const AI_PROVIDER_NAMES = ["openai", "anthropic", "deepseek", "grok", "llama", "openrouter"] as const
+export const AI_PROVIDER_NAMES = ["gemini", "openrouter", "openai", "anthropic"] as const
 export type AiProviderName = (typeof AI_PROVIDER_NAMES)[number]
 
 type ProviderPolicy = {
@@ -9,18 +9,16 @@ type ProviderPolicy = {
   premiumProviders: Set<AiProviderName>
 }
 
-const DEFAULT_STARTER_ALLOW: AiProviderName[] = ["llama", "deepseek", "openrouter", "openai"]
+const DEFAULT_STARTER_ALLOW: AiProviderName[] = ["gemini", "openrouter"]
 const DEFAULT_PRO_ALLOW: AiProviderName[] = [...AI_PROVIDER_NAMES]
-const DEFAULT_PREMIUM: AiProviderName[] = ["openai", "anthropic", "grok"]
+const DEFAULT_PREMIUM: AiProviderName[] = ["gemini", "openrouter", "anthropic"]
 
 function asProviderName(value: string): AiProviderName | null {
   const normalized = value.trim().toLowerCase()
-  if (normalized === "openai") return "openai"
-  if (normalized === "anthropic") return "anthropic"
-  if (normalized === "deepseek") return "deepseek"
-  if (normalized === "grok") return "grok"
-  if (normalized === "llama") return "llama"
-  if (normalized === "openrouter") return "openrouter"
+  if (normalized === "gemini" || normalized === "google") return "gemini"
+  if (normalized === "openrouter" || normalized === "router") return "openrouter"
+  if (normalized === "openai" || normalized === "gpt") return "openai"
+  if (normalized === "anthropic" || normalized === "claude") return "anthropic"
   return null
 }
 

@@ -85,6 +85,7 @@ export async function POST(request: Request) {
   const job = enqueueEmailJob({
     campaignId,
     userId: session.user.id,
+    userPlan: session.user.plan,
     subject,
     html: body.html,
     text: body.text,

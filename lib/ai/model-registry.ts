@@ -1,5 +1,8 @@
 import type { AiModelMode } from "@/lib/ai/model-mode"
 
+// EUR/USD conversion rate for cost accounting
+const EUR_USD_RATE = 0.92
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -23,8 +26,11 @@ export type ModelRegistryEntry = {
 
 export type PlanUsageBudget = {
   plan: string
-  /** Max USD spend on provider costs per calendar month */
-  monthlyBudgetUsd: number
+  /**
+   * Max AI spend per calendar month in EUR.
+   * Pro: €12.50 (net after 15% platform margin on €15.99 subscription).
+   */
+  monthlyBudgetEur: number
   /** Which model modes this plan can access */
   modelAccess: AiModelMode[]
 }
@@ -35,7 +41,7 @@ export type PlatformRevenueConfig = {
 }
 
 // ---------------------------------------------------------------------------
-// Revenue split — 15% platform, 40% of that funds free users
+// Revenue split — 15% platform margin, 40% of that funds free users
 // ---------------------------------------------------------------------------
 
 export const PLATFORM_REVENUE_CONFIG: PlatformRevenueConfig = {
@@ -43,43 +49,66 @@ export const PLATFORM_REVENUE_CONFIG: PlatformRevenueConfig = {
   freeUserFundPercent: 40,
 }
 
+/**
+ * Hard monthly AI budget for Pro users in EUR.
+ * Derived from: €15.99 subscription × (1 - 0.15 platform margin) ≈ €13.59,
+ * minus payment processor fees ≈ €12.50 net for AI spend.
+ */
+export const PRO_MONTHLY_AI_BUDGET_EUR = 12.50
+
 // ---------------------------------------------------------------------------
-// Plan budgets — expressed in provider-cost USD, NOT tokens.
-// 3 tiers only: Free, Pro ($15/mo), Premium ($49/mo).
+// Plan budgets — expressed in EUR provider-cost, NOT tokens.
 // Internal cost accounting — never exposed to users.
 // ---------------------------------------------------------------------------
 
 export const PLAN_USAGE_BUDGETS: PlanUsageBudget[] = [
   {
     plan: "free",
-    monthlyBudgetUsd: 0.25,
-    modelAccess: ["essential"],
+    monthlyBudgetEur: 0.25,
+    modelAccess: ["fast"],
   },
   {
     plan: "pro",
-    monthlyBudgetUsd: 7.50,
-    modelAccess: ["essential", "balanced", "premium"],
+    monthlyBudgetEur: PRO_MONTHLY_AI_BUDGET_EUR,
+    modelAccess: ["fast", "boost", "max"],
   },
   {
     plan: "premium",
-    monthlyBudgetUsd: 30.00,
-    modelAccess: ["essential", "balanced", "premium"],
+    monthlyBudgetEur: 30.00,
+    modelAccess: ["fast", "boost", "max"],
   },
 ]
 
 // ---------------------------------------------------------------------------
-// Model registry — real provider pricing (USD per 1K tokens)
+// Model registry — Gemini primary, OpenRouter secondary for non-Gemini options
+// Pricing in USD per 1K tokens
 // ---------------------------------------------------------------------------
 
 export const MODEL_REGISTRY: ModelRegistryEntry[] = [
+  // ── Fast mode (Performance) ─────────────────────────────────────────────
   {
-    id: "mini-openrouter-llama",
-    provider: "openrouter",
-    model: "meta-llama/llama-3.3-70b-instruct:free",
-    label: "Mini (Llama)",
-    mode: "essential",
+    id: "fast-gemini-15-flash",
+    provider: "gemini",
+    model: "gemini-1.5-flash",
+    label: "Fast · Gemini 1.5 Flash",
+    mode: "fast",
+    inputCostPer1kTokens: 0.000075,
+    outputCostPer1kTokens: 0.0003,
+    maxOutputTokens: 700,
+    temperature: 0.22,
+    qualityInstruction:
+      "Maximize quality under tight budget: be precise, avoid fluff, use short structured output, validate assumptions, and produce actionable copy.",
+    expenseTier: "low",
+    quotaMultiplier: 1,
+  },
+  {
+    id: "fast-gemini-2-flash",
+    provider: "gemini",
+    model: "gemini-2.0-flash",
+    label: "Fast · Gemini 2.0 Flash",
+    mode: "fast",
     inputCostPer1kTokens: 0.0001,
-    outputCostPer1kTokens: 0.00015,
+    outputCostPer1kTokens: 0.0004,
     maxOutputTokens: 700,
     temperature: 0.22,
     qualityInstruction:
@@ -88,13 +117,13 @@ export const MODEL_REGISTRY: ModelRegistryEntry[] = [
     quotaMultiplier: 1,
   },
   {
-    id: "mini-deepseek",
-    provider: "deepseek",
-    model: "deepseek-chat",
-    label: "Mini (DeepSeek)",
-    mode: "essential",
-    inputCostPer1kTokens: 0.00014,
-    outputCostPer1kTokens: 0.00028,
+    id: "fast-openrouter-gpt35",
+    provider: "openrouter",
+    model: "openai/gpt-3.5-turbo",
+    label: "Fast · GPT-3.5 Turbo",
+    mode: "fast",
+    inputCostPer1kTokens: 0.0005,
+    outputCostPer1kTokens: 0.0015,
     maxOutputTokens: 700,
     temperature: 0.22,
     qualityInstruction:
@@ -103,28 +132,29 @@ export const MODEL_REGISTRY: ModelRegistryEntry[] = [
     quotaMultiplier: 1,
   },
   {
-    id: "balanced-openai-mini",
-    provider: "openai",
-    model: "gpt-4.1-mini",
-    label: "Standard (GPT-4.1 Mini)",
-    mode: "balanced",
-    inputCostPer1kTokens: 0.0004,
-    outputCostPer1kTokens: 0.0016,
-    maxOutputTokens: 900,
-    temperature: 0.28,
-    qualityInstruction:
-      "Prioritize high signal: clear campaign strategy, concise sections, practical next actions, and consistent tone aligned to audience and goal.",
-    expenseTier: "medium",
-    quotaMultiplier: 3,
-  },
-  {
-    id: "balanced-anthropic-haiku",
-    provider: "anthropic",
-    model: "claude-3-5-haiku-latest",
-    label: "Standard (Claude Haiku)",
-    mode: "balanced",
+    id: "fast-openrouter-claude-haiku",
+    provider: "openrouter",
+    model: "anthropic/claude-3-haiku",
+    label: "Fast · Claude Haiku",
+    mode: "fast",
     inputCostPer1kTokens: 0.00025,
     outputCostPer1kTokens: 0.00125,
+    maxOutputTokens: 700,
+    temperature: 0.22,
+    qualityInstruction:
+      "Maximize quality under tight budget: be precise, avoid fluff, use short structured output, validate assumptions, and produce actionable copy.",
+    expenseTier: "low",
+    quotaMultiplier: 1,
+  },
+  // ── Boost mode (Balanced) ────────────────────────────────────────────────
+  {
+    id: "boost-gemini-pro",
+    provider: "gemini",
+    model: "gemini-2.0-pro-exp",
+    label: "Boost · Gemini 2.0 Pro",
+    mode: "boost",
+    inputCostPer1kTokens: 0.0025,
+    outputCostPer1kTokens: 0.0075,
     maxOutputTokens: 900,
     temperature: 0.28,
     qualityInstruction:
@@ -133,13 +163,44 @@ export const MODEL_REGISTRY: ModelRegistryEntry[] = [
     quotaMultiplier: 3,
   },
   {
-    id: "premium-openai-gpt4",
-    provider: "openai",
-    model: "gpt-4.1",
-    label: "Premium (GPT-4.1)",
-    mode: "premium",
-    inputCostPer1kTokens: 0.002,
-    outputCostPer1kTokens: 0.008,
+    id: "boost-openrouter-gpt4o",
+    provider: "openrouter",
+    model: "openai/gpt-4o",
+    label: "Boost · GPT-4o",
+    mode: "boost",
+    inputCostPer1kTokens: 0.005,
+    outputCostPer1kTokens: 0.015,
+    maxOutputTokens: 900,
+    temperature: 0.28,
+    qualityInstruction:
+      "Prioritize high signal: clear campaign strategy, concise sections, practical next actions, and consistent tone aligned to audience and goal.",
+    expenseTier: "medium",
+    quotaMultiplier: 3,
+  },
+  {
+    id: "boost-openrouter-claude-sonnet",
+    provider: "openrouter",
+    model: "anthropic/claude-3-5-sonnet",
+    label: "Boost · Claude 3.5 Sonnet",
+    mode: "boost",
+    inputCostPer1kTokens: 0.003,
+    outputCostPer1kTokens: 0.015,
+    maxOutputTokens: 900,
+    temperature: 0.28,
+    qualityInstruction:
+      "Prioritize high signal: clear campaign strategy, concise sections, practical next actions, and consistent tone aligned to audience and goal.",
+    expenseTier: "medium",
+    quotaMultiplier: 3,
+  },
+  // ── Max mode (Creative/Deep) ─────────────────────────────────────────────
+  {
+    id: "max-gemini-25-flash",
+    provider: "gemini",
+    model: "gemini-2.5-flash-preview-04-17",
+    label: "Max · Gemini 2.5 Flash",
+    mode: "max",
+    inputCostPer1kTokens: 0.0015,
+    outputCostPer1kTokens: 0.006,
     maxOutputTokens: 1200,
     temperature: 0.2,
     qualityInstruction:
@@ -148,13 +209,13 @@ export const MODEL_REGISTRY: ModelRegistryEntry[] = [
     quotaMultiplier: 8,
   },
   {
-    id: "premium-anthropic-sonnet",
-    provider: "anthropic",
-    model: "claude-sonnet-4-20250514",
-    label: "Premium (Claude Sonnet)",
-    mode: "premium",
-    inputCostPer1kTokens: 0.003,
-    outputCostPer1kTokens: 0.015,
+    id: "max-openrouter-claude-opus",
+    provider: "openrouter",
+    model: "anthropic/claude-3-opus",
+    label: "Max · Claude 3 Opus",
+    mode: "max",
+    inputCostPer1kTokens: 0.015,
+    outputCostPer1kTokens: 0.075,
     maxOutputTokens: 1200,
     temperature: 0.2,
     qualityInstruction:
@@ -167,6 +228,10 @@ export const MODEL_REGISTRY: ModelRegistryEntry[] = [
 // ---------------------------------------------------------------------------
 // Lookups
 // ---------------------------------------------------------------------------
+
+export function getModelsForMode(mode: AiModelMode): ModelRegistryEntry[] {
+  return MODEL_REGISTRY.filter((entry) => entry.mode === mode)
+}
 
 export function getModelForMode(mode: AiModelMode): ModelRegistryEntry {
   const envProvider = process.env[`AI_MODE_${mode.toUpperCase()}_PROVIDER`]
@@ -181,6 +246,11 @@ export function getModelForMode(mode: AiModelMode): ModelRegistryEntry {
 
   const candidates = MODEL_REGISTRY.filter((entry) => entry.mode === mode)
   return candidates[0] ?? MODEL_REGISTRY[0]
+}
+
+/** Returns the fallback Flash model used when budget is exhausted */
+export function getBudgetFallbackModel(): ModelRegistryEntry {
+  return MODEL_REGISTRY.find((e) => e.id === "fast-gemini-15-flash") ?? MODEL_REGISTRY[0]
 }
 
 export function getPlanBudget(plan: string): PlanUsageBudget {
@@ -249,7 +319,7 @@ export function tokenCostToCredits(
   const costUsd = estimateTokenCost(modelEntry, inputTokens, outputTokens)
 
   const modeMultiplier =
-    modelEntry.mode === "premium" ? 3.0 : modelEntry.mode === "balanced" ? 1.5 : 1.0
+    modelEntry.mode === "max" ? 3.0 : modelEntry.mode === "boost" ? 1.5 : 1.0
 
   const rawCredits = Math.ceil(costUsd * 10000 * modeMultiplier)
   return Math.max(1, Math.min(rawCredits, 50))
@@ -258,6 +328,13 @@ export function tokenCostToCredits(
 // ---------------------------------------------------------------------------
 // Revenue split helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Convert USD cost to EUR for budget accounting.
+ */
+export function usdToEur(usd: number): number {
+  return Number((usd * EUR_USD_RATE).toFixed(6))
+}
 
 export function calculateFreeUserTokenAllocation(
   subscriptionRevenue: number,
@@ -289,15 +366,8 @@ export type ModelInfoForClient = {
 
 export function getModelsForClient(plan: string): ModelInfoForClient[] {
   const budget = getPlanBudget(plan)
-  const seen = new Set<AiModelMode>()
-
   return MODEL_REGISTRY
-    .filter((entry) => {
-      if (!budget.modelAccess.includes(entry.mode)) return false
-      if (seen.has(entry.mode)) return false
-      seen.add(entry.mode)
-      return true
-    })
+    .filter((entry) => budget.modelAccess.includes(entry.mode))
     .map((entry) => ({
       id: entry.id,
       label: entry.label,

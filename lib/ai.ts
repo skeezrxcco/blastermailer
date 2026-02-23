@@ -3,7 +3,7 @@ export type GenerateAiTextInput = {
   system?: string
   model?: string
   temperature?: number
-  mode?: "essential" | "balanced" | "premium"
+  mode?: "fast" | "boost" | "max"
   provider?: string
   userId?: string
   userPlan?: string
@@ -48,7 +48,7 @@ export type GenerateAiTextStreamChunk =
       attempts: GenerateAiProviderAttempt[]
     }
 
-type AiProviderName = "openai" | "anthropic" | "deepseek" | "grok" | "llama" | "openrouter"
+type AiProviderName = "gemini" | "openrouter" | "openai" | "anthropic"
 type AiProviderPreference = "auto" | AiProviderName
 
 type ProviderConfig = {
@@ -74,27 +74,23 @@ type ProviderSelectionActive = {
   perUserLimit: number
 }
 
-const DEFAULT_PRIORITY: AiProviderName[] = ["deepseek", "llama", "openrouter", "openai", "anthropic", "grok"]
+const DEFAULT_PRIORITY: AiProviderName[] = ["gemini", "openrouter", "openai", "anthropic"]
 const ONBOARDING_FREE_PLANS = new Set(["starter", "free", "trial"])
 const DEFAULT_FREE_DAILY_PER_USER = 20
 const DEFAULT_MAX_OUTPUT_TOKENS = 640
 const DEFAULT_FREE_WEIGHTS: Record<AiProviderName, number> = {
+  gemini: 1.5,
+  openrouter: 1.25,
   openai: 0.85,
   anthropic: 0.75,
-  deepseek: 1.3,
-  grok: 0.65,
-  llama: 1.15,
-  openrouter: 1.25,
 }
 
 function emptyUsageCounters(): Record<AiProviderName, number> {
   return {
+    gemini: 0,
+    openrouter: 0,
     openai: 0,
     anthropic: 0,
-    deepseek: 0,
-    grok: 0,
-    llama: 0,
-    openrouter: 0,
   }
 }
 
@@ -102,23 +98,17 @@ function asProviderName(value?: string | null): AiProviderName | null {
   const normalized = String(value ?? "")
     .trim()
     .toLowerCase()
+  if (normalized === "gemini" || normalized === "google") {
+    return "gemini"
+  }
+  if (normalized === "openrouter" || normalized === "router") {
+    return "openrouter"
+  }
   if (normalized === "openai" || normalized === "gpt") {
     return "openai"
   }
   if (normalized === "anthropic" || normalized === "claude") {
     return "anthropic"
-  }
-  if (normalized === "deepseek") {
-    return "deepseek"
-  }
-  if (normalized === "grok" || normalized === "xai" || normalized === "x.ai") {
-    return "grok"
-  }
-  if (normalized === "llama" || normalized === "meta" || normalized === "meta-llama") {
-    return "llama"
-  }
-  if (normalized === "openrouter" || normalized === "router") {
-    return "openrouter"
   }
   return null
 }
@@ -176,15 +166,14 @@ function clampTextToTokenBudget(text: string, maxOutputTokens: number) {
 
 function estimateCostUsd(provider: AiProviderName, tokenIn: number, tokenOut: number) {
   const ratesPerThousand: Record<AiProviderName, { in: number; out: number }> = {
+    gemini: { in: 0.000075, out: 0.0003 },
+    openrouter: { in: 0.0005, out: 0.0015 },
     openai: { in: 0.0004, out: 0.0016 },
     anthropic: { in: 0.00025, out: 0.00125 },
-    deepseek: { in: 0.00014, out: 0.00028 },
-    grok: { in: 0.0007, out: 0.0015 },
-    llama: { in: 0.0001, out: 0.0001 },
-    openrouter: { in: 0.0001, out: 0.00015 },
   }
 
   const pricing = ratesPerThousand[provider]
+  if (!pricing) return null
   const cost = (tokenIn / 1000) * pricing.in + (tokenOut / 1000) * pricing.out
   return Number.isFinite(cost) ? Number(cost.toFixed(6)) : null
 }
@@ -200,12 +189,10 @@ function normalizeErrorCode(message: string) {
 
 function getDailyCaps(): Record<AiProviderName, number> {
   return {
+    gemini: parsePositiveInt(process.env.AI_FREE_DAILY_GEMINI),
+    openrouter: parsePositiveInt(process.env.AI_FREE_DAILY_OPENROUTER),
     openai: parsePositiveInt(process.env.AI_FREE_DAILY_OPENAI),
     anthropic: parsePositiveInt(process.env.AI_FREE_DAILY_ANTHROPIC),
-    deepseek: parsePositiveInt(process.env.AI_FREE_DAILY_DEEPSEEK),
-    grok: parsePositiveInt(process.env.AI_FREE_DAILY_GROK),
-    llama: parsePositiveInt(process.env.AI_FREE_DAILY_LLAMA),
-    openrouter: parsePositiveInt(process.env.AI_FREE_DAILY_OPENROUTER),
   }
 }
 
@@ -215,12 +202,10 @@ function hasAnyDailyCap(caps: Record<AiProviderName, number>): boolean {
 
 function getFreeWeights(): Record<AiProviderName, number> {
   return {
+    gemini: parsePositiveFloat(process.env.AI_FREE_WEIGHT_GEMINI) || DEFAULT_FREE_WEIGHTS.gemini,
+    openrouter: parsePositiveFloat(process.env.AI_FREE_WEIGHT_OPENROUTER) || DEFAULT_FREE_WEIGHTS.openrouter,
     openai: parsePositiveFloat(process.env.AI_FREE_WEIGHT_OPENAI) || DEFAULT_FREE_WEIGHTS.openai,
     anthropic: parsePositiveFloat(process.env.AI_FREE_WEIGHT_ANTHROPIC) || DEFAULT_FREE_WEIGHTS.anthropic,
-    deepseek: parsePositiveFloat(process.env.AI_FREE_WEIGHT_DEEPSEEK) || DEFAULT_FREE_WEIGHTS.deepseek,
-    grok: parsePositiveFloat(process.env.AI_FREE_WEIGHT_GROK) || DEFAULT_FREE_WEIGHTS.grok,
-    llama: parsePositiveFloat(process.env.AI_FREE_WEIGHT_LLAMA) || DEFAULT_FREE_WEIGHTS.llama,
-    openrouter: parsePositiveFloat(process.env.AI_FREE_WEIGHT_OPENROUTER) || DEFAULT_FREE_WEIGHTS.openrouter,
   }
 }
 
@@ -271,53 +256,12 @@ function isLikelyLocalBaseUrl(url: string) {
 function buildProviderConfigs(): ProviderConfig[] {
   const providers: ProviderConfig[] = []
 
-  if (process.env.OPENAI_API_KEY) {
+  if (process.env.GEMINI_API_KEY) {
     providers.push({
-      provider: "openai",
-      apiKey: process.env.OPENAI_API_KEY,
-      model: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
-      baseUrl: (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/$/, ""),
-    })
-  }
-
-  if (process.env.ANTHROPIC_API_KEY) {
-    providers.push({
-      provider: "anthropic",
-      apiKey: process.env.ANTHROPIC_API_KEY,
-      model: process.env.ANTHROPIC_MODEL ?? "claude-3-5-haiku-latest",
-      baseUrl: (process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com/v1").replace(/\/$/, ""),
-    })
-  }
-
-  if (process.env.DEEPSEEK_API_KEY) {
-    providers.push({
-      provider: "deepseek",
-      apiKey: process.env.DEEPSEEK_API_KEY,
-      model: process.env.DEEPSEEK_MODEL ?? "deepseek-chat",
-      baseUrl: (process.env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com/v1").replace(/\/$/, ""),
-    })
-  }
-
-  if (process.env.GROK_API_KEY) {
-    providers.push({
-      provider: "grok",
-      apiKey: process.env.GROK_API_KEY,
-      model: process.env.GROK_MODEL ?? "grok-beta",
-      baseUrl: (process.env.GROK_BASE_URL ?? "https://api.x.ai/v1").replace(/\/$/, ""),
-    })
-  }
-
-  const llamaBaseUrl = (process.env.LLAMA_BASE_URL ?? "https://api.llama.com/compat/v1").replace(/\/$/, "")
-  const llamaApiKey = String(process.env.LLAMA_API_KEY ?? "").trim()
-  const llamaAllowNoKey = (process.env.LLAMA_ALLOW_NO_KEY ?? "").trim().toLowerCase()
-  const canUseKeylessLlama = (llamaAllowNoKey === "true" || llamaAllowNoKey === "1" || llamaAllowNoKey === "yes") && isLikelyLocalBaseUrl(llamaBaseUrl)
-
-  if (llamaApiKey || canUseKeylessLlama) {
-    providers.push({
-      provider: "llama",
-      apiKey: llamaApiKey || undefined,
-      model: process.env.LLAMA_MODEL ?? "Llama-3.3-70B-Instruct",
-      baseUrl: llamaBaseUrl,
+      provider: "gemini",
+      apiKey: process.env.GEMINI_API_KEY,
+      model: process.env.GEMINI_MODEL ?? "gemini-1.5-flash",
+      baseUrl: (process.env.GEMINI_BASE_URL ?? "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, ""),
     })
   }
 
@@ -331,9 +275,27 @@ function buildProviderConfigs(): ProviderConfig[] {
     providers.push({
       provider: "openrouter",
       apiKey: process.env.OPENROUTER_API_KEY,
-      model: process.env.OPENROUTER_MODEL ?? "meta-llama/llama-3.3-70b-instruct:free",
+      model: process.env.OPENROUTER_MODEL ?? "openai/gpt-3.5-turbo",
       baseUrl: (process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1").replace(/\/$/, ""),
       headers,
+    })
+  }
+
+  if (process.env.OPENAI_API_KEY) {
+    providers.push({
+      provider: "openai",
+      apiKey: process.env.OPENAI_API_KEY,
+      model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+      baseUrl: (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/$/, ""),
+    })
+  }
+
+  if (process.env.ANTHROPIC_API_KEY) {
+    providers.push({
+      provider: "anthropic",
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      model: process.env.ANTHROPIC_MODEL ?? "claude-3-haiku-20240307",
+      baseUrl: (process.env.ANTHROPIC_BASE_URL ?? "https://api.anthropic.com/v1").replace(/\/$/, ""),
     })
   }
 
@@ -492,11 +454,11 @@ function buildAttemptOrder(
   push(selectedOnboardingProvider)
 
   const modePreferredOrder: Record<NonNullable<GenerateAiTextInput["mode"]>, AiProviderName[]> = {
-    essential: ["openrouter", "llama", "deepseek", "openai", "anthropic", "grok"],
-    balanced: ["deepseek", "openai", "anthropic", "openrouter", "llama", "grok"],
-    premium: ["openai", "anthropic", "grok", "deepseek", "openrouter", "llama"],
+    fast: ["gemini", "openrouter", "openai", "anthropic"],
+    boost: ["gemini", "openrouter", "openai", "anthropic"],
+    max: ["gemini", "openrouter", "anthropic", "openai"],
   }
-  const mode = input.mode ?? "essential"
+  const mode = input.mode ?? "fast"
   for (const provider of modePreferredOrder[mode]) {
     push(provider)
   }

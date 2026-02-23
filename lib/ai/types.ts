@@ -115,6 +115,10 @@ export type AiStreamEvent =
       campaignId?: string | null
       remainingCredits?: number | null
       maxCredits?: number | null
+      /** Estimated provider cost in EUR for this request (telemetry) */
+      estimatedCostEur?: number | null
+      /** True if the model was downgraded due to budget exhaustion */
+      budgetDowngraded?: boolean
     }
   | {
       type: "error"

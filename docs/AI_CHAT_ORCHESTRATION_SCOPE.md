@@ -1,6 +1,4 @@
-# AI Chat Orchestration Scope (Task Group 4)
-
-This branch starts Task Group 4 from `project-management/TASKS.md` with a practical orchestration foundation.
+# AI Chat Orchestration Scope
 
 ## Implemented in this branch
 
@@ -26,4 +24,3 @@ This branch starts Task Group 4 from `project-management/TASKS.md` with a practi
 3. Add deterministic routing policies by plan/tier/cost and usage budget.
 4. Add moderation/safety policies before generation.
 5. Add end-to-end telemetry dashboard (latency/error/provider/stage).
-

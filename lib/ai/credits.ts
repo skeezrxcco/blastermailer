@@ -19,10 +19,12 @@ export type AiCreditsSnapshot = {
   windowHours: number | null
   resetAt: Date | null
   congestion: CongestionLevel
-  /** Monthly provider-cost budget in USD */
-  monthlyBudgetUsd: number
-  /** Estimated remaining provider-cost budget in USD */
-  remainingBudgetUsd: number
+  /** Monthly provider-cost budget in EUR */
+  monthlyBudgetEur: number
+  /** Estimated remaining provider-cost budget in EUR */
+  remainingBudgetEur: number
+  /** True when the monthly AI budget is fully exhausted */
+  budgetExhausted: boolean
 }
 
 const DEFAULT_NON_PRO_MAX_CREDITS = 25
@@ -128,7 +130,7 @@ export function estimateCreditCost(input: {
   const promptUnits = Math.max(1, Math.ceil(input.prompt.trim().length / 180))
   const responseUnits = input.responseText ? Math.max(1, Math.ceil(input.responseText.trim().length / 260)) : 1
 
-  const modeWeight = input.mode === "premium" ? 1.8 : input.mode === "balanced" ? 1.35 : 1
+  const modeWeight = input.mode === "max" ? 1.8 : input.mode === "boost" ? 1.35 : 1
   const toolWeight =
     input.toolName === "confirm_queue_campaign" || input.toolName === "request_recipients"
       ? 0.9
@@ -142,23 +144,26 @@ export function estimateCreditCost(input: {
 
 export async function getAiCreditsSnapshot(input: { userId: string; userPlan?: string }): Promise<AiCreditsSnapshot> {
   const planBudget = getPlanBudget(input.userPlan ?? "free")
+  // EUR cost per credit unit (approximate)
+  const eurPerCredit = 0.000276
 
   if (isPaidPlan(input.userPlan)) {
     const monthlyUsage = await getMonthlyUsageCredits(input.userId)
-    const estimatedSpendUsd = monthlyUsage * 0.0003
-    const remainingBudgetUsd = Math.max(0, planBudget.monthlyBudgetUsd - estimatedSpendUsd)
-    const exhausted = remainingBudgetUsd <= 0
+    const estimatedSpendEur = monthlyUsage * eurPerCredit
+    const remainingBudgetEur = Math.max(0, planBudget.monthlyBudgetEur - estimatedSpendEur)
+    const budgetExhausted = remainingBudgetEur <= 0
 
     return {
       limited: true,
-      maxCredits: Math.ceil(planBudget.monthlyBudgetUsd / 0.0003),
-      remainingCredits: exhausted ? 0 : Math.ceil(remainingBudgetUsd / 0.0003),
+      maxCredits: Math.ceil(planBudget.monthlyBudgetEur / eurPerCredit),
+      remainingCredits: budgetExhausted ? 0 : Math.ceil(remainingBudgetEur / eurPerCredit),
       usedCredits: monthlyUsage,
       windowHours: null,
       resetAt: getMonthResetDate(),
       congestion: "low",
-      monthlyBudgetUsd: planBudget.monthlyBudgetUsd,
-      remainingBudgetUsd,
+      monthlyBudgetEur: planBudget.monthlyBudgetEur,
+      remainingBudgetEur,
+      budgetExhausted,
     }
   }
 
@@ -181,8 +186,8 @@ export async function getAiCreditsSnapshot(input: { userId: string; userPlan?: s
   const usedCredits = usage?.requests ?? 0
   const remainingCredits = Math.max(0, maxCredits - usedCredits)
 
-  const estimatedSpendUsd = usedCredits * 0.0003
-  const remainingBudgetUsd = Math.max(0, planBudget.monthlyBudgetUsd - estimatedSpendUsd)
+  const estimatedSpendEur = usedCredits * eurPerCredit
+  const remainingBudgetEur = Math.max(0, planBudget.monthlyBudgetEur - estimatedSpendEur)
 
   return {
     limited: true,
@@ -192,9 +197,19 @@ export async function getAiCreditsSnapshot(input: { userId: string; userPlan?: s
     windowHours: hours,
     resetAt: windowInfo.resetAt,
     congestion,
-    monthlyBudgetUsd: planBudget.monthlyBudgetUsd,
-    remainingBudgetUsd,
+    monthlyBudgetEur: planBudget.monthlyBudgetEur,
+    remainingBudgetEur,
+    budgetExhausted: remainingCredits <= 0,
   }
+}
+
+/**
+ * Check whether a user's monthly AI budget is exhausted.
+ * Used by the financial routing middleware to decide whether to downgrade the model.
+ */
+export async function isBudgetExhausted(input: { userId: string; userPlan?: string }): Promise<boolean> {
+  const snapshot = await getAiCreditsSnapshot(input)
+  return snapshot.budgetExhausted
 }
 
 export async function assertMinimumCredits(input: { userId: string; userPlan?: string; minimumCredits: number }) {
@@ -224,7 +239,7 @@ export async function consumeAiCredits(input: {
 }) {
   if (isPaidPlan(input.userPlan)) {
     const snapshot = input.cachedSnapshot ?? (await getAiCreditsSnapshot({ userId: input.userId, userPlan: input.userPlan }))
-    if (snapshot.remainingBudgetUsd <= 0) {
+    if (snapshot.remainingBudgetEur <= 0) {
       return { charged: 0, snapshot }
     }
     const requested = Math.max(1, input.credits)

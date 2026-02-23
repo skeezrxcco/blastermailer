@@ -16,13 +16,13 @@ export async function GET() {
   })
 
   const quotaPercent =
-    snapshot.monthlyBudgetUsd > 0
-      ? Math.max(0, Math.min(100, Math.round((snapshot.remainingBudgetUsd / snapshot.monthlyBudgetUsd) * 100)))
+    snapshot.monthlyBudgetEur > 0
+      ? Math.max(0, Math.min(100, Math.round((snapshot.remainingBudgetEur / snapshot.monthlyBudgetEur) * 100)))
       : 0
 
   return NextResponse.json({
     quotaPercent,
-    exhausted: quotaPercent <= 0,
+    exhausted: snapshot.budgetExhausted,
     plan: session.user.plan ?? "free",
     resetAt: snapshot.resetAt?.toISOString() ?? null,
   })

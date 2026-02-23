@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma"
-import { assertMinimumCredits, consumeAiCredits, estimateCreditCost } from "@/lib/ai/credits"
+import { assertMinimumCredits, consumeAiCredits, estimateCreditCost, isBudgetExhausted } from "@/lib/ai/credits"
 import { resolveAiModelProfile, type AiModelMode } from "@/lib/ai/model-mode"
+import { usdToEur } from "@/lib/ai/model-registry"
 import { generateAiText, generateAiTextStream, type GenerateAiTextInput, type GenerateAiTextResult } from "@/lib/ai"
 import { moderatePrompt } from "@/lib/ai/moderation"
 import { executeTool } from "@/lib/ai/tools"
@@ -14,6 +15,11 @@ type OrchestratorInput = {
   userPlan?: string
   prompt: string
   conversationId?: string | null
+  /** Quality mode: fast | boost | max */
+  qualityMode?: string | null
+  /** Specific model registry ID within the quality mode */
+  specificModel?: string | null
+  /** @deprecated Use qualityMode instead */
   mode?: AiModelMode
   model?: string
   provider?: string
@@ -381,9 +387,18 @@ function chunkText(text: string) {
 export async function* orchestrateAiChatStream(input: OrchestratorInput): AsyncGenerator<AiStreamEvent> {
   const requestId = crypto.randomUUID()
   const moderation = moderatePrompt(input.prompt)
-  const modelProfile = resolveAiModelProfile({
-    mode: input.mode,
+
+  // Financial routing: check if Pro user has exceeded €12.50/month budget
+  const budgetExhausted = await isBudgetExhausted({
+    userId: input.userId,
     userPlan: input.userPlan,
+  })
+
+  const modelProfile = resolveAiModelProfile({
+    mode: input.qualityMode ?? input.mode,
+    userPlan: input.userPlan,
+    specificModel: input.specificModel,
+    budgetExhausted,
   })
   const workflowSession = await loadOrCreateWorkflowSession({
     userId: input.userId,
@@ -660,6 +675,11 @@ export async function* orchestrateAiChatStream(input: OrchestratorInput): AsyncG
     cachedSnapshot: creditsSnapshot,
   })
 
+  // Compute estimated cost in EUR for telemetry
+  const totalCostUsd =
+    (plannerResult?.estimatedCostUsd ?? 0) + (responseResult?.estimatedCostUsd ?? 0)
+  const estimatedCostEur = totalCostUsd > 0 ? usdToEur(totalCostUsd) : null
+
   yield {
     type: "done",
     requestId,
@@ -673,5 +693,7 @@ export async function* orchestrateAiChatStream(input: OrchestratorInput): AsyncG
     campaignId: toolResult.campaignId ?? null,
     remainingCredits: creditCharge.snapshot.remainingCredits,
     maxCredits: creditCharge.snapshot.maxCredits,
+    estimatedCostEur,
+    budgetDowngraded: modelProfile.budgetDowngraded ?? false,
   }
 }
