@@ -234,6 +234,20 @@ export type WorkflowSessionListItem = {
   createdAt: Date
 }
 
+export async function archiveWorkflowSession(input: { userId: string; conversationId: string }): Promise<boolean> {
+  const result = await prisma.aiWorkflowSession.updateMany({
+    where: {
+      userId: input.userId,
+      conversationId: input.conversationId,
+      archivedAt: null,
+    },
+    data: {
+      archivedAt: new Date(),
+    },
+  })
+  return result.count > 0
+}
+
 export async function listWorkflowSessions(input: { userId: string; limit?: number }): Promise<WorkflowSessionListItem[]> {
   const now = new Date()
   const limit = Math.min(Math.max(input.limit ?? 25, 1), 100)

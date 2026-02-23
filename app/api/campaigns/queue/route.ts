@@ -3,6 +3,7 @@ import { NextResponse } from "next/server"
 
 import { authOptions } from "@/lib/auth"
 import { enqueueEmailJob, type SmtpConfig, type SmtpSource } from "@/lib/email-queue"
+import { checkEmailQuota, consumeEmailQuota } from "@/lib/email-quota"
 
 function normalizeSmtpSource(value?: string): SmtpSource {
   const normalized = String(value ?? "platform").trim().toLowerCase()
@@ -45,6 +46,26 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "At least one recipient email is required" }, { status: 422 })
   }
 
+  const quota = await checkEmailQuota({
+    userId: session.user.id,
+    userPlan: session.user.plan,
+    emailCount: recipientEmails.length,
+  })
+
+  if (!quota.allowed) {
+    return NextResponse.json(
+      {
+        error: `Email quota exceeded. You have ${quota.remaining}/${quota.limit} emails remaining this month. Resets on ${quota.resetAt?.toLocaleDateString() ?? "next month"}.`,
+        quota: {
+          remaining: quota.remaining,
+          limit: quota.limit,
+          resetAt: quota.resetAt,
+        },
+      },
+      { status: 429 },
+    )
+  }
+
   const smtpSource = normalizeSmtpSource(body.smtpSource)
   const smtpConfig: SmtpConfig = {
     source: smtpSource,
@@ -72,11 +93,21 @@ export async function POST(request: Request) {
     recipientEmails,
   })
 
+  await consumeEmailQuota({
+    userId: session.user.id,
+    userPlan: session.user.plan,
+    emailCount: recipientEmails.length,
+  })
+
   return NextResponse.json({
     jobId: job.id,
     campaignId: job.campaignId,
     status: job.status,
     recipientCount: job.recipients.length,
     progress: job.progress,
+    quota: {
+      remaining: quota.remaining - recipientEmails.length,
+      limit: quota.limit,
+    },
   })
 }

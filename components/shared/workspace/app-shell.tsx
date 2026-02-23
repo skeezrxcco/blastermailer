@@ -2,7 +2,7 @@
 
 import { type ComponentType, type ReactNode, useEffect, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { ChevronDown, ChevronRight } from "lucide-react"
+import { ChevronDown, ChevronRight, Trash2 } from "lucide-react"
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -505,19 +505,45 @@ export function WorkspaceShell({
                       chatHistory.slice(0, 10).map((item, index) => {
                         const isActive = tab === "chat" && activeConversationId === item.conversationId
                         return (
-                          <button
-                            key={item.conversationId}
-                            type="button"
-                            onClick={() => {
-                              router.push(`/chat?conversationId=${encodeURIComponent(item.conversationId)}`)
-                            }}
-                            className={cn(
-                              "w-full rounded-md px-2.5 py-2 text-left transition",
-                              isActive ? "text-zinc-100" : "text-zinc-500 hover:text-zinc-200",
-                            )}
-                          >
-                            <p className="truncate text-[12px] font-medium leading-5">{chatHistoryTitle(item, index)}</p>
-                          </button>
+                          <div key={item.conversationId} className="group relative">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                router.push(`/chat?conversationId=${encodeURIComponent(item.conversationId)}`)
+                              }}
+                              className={cn(
+                                "w-full rounded-md px-2.5 py-2 text-left transition",
+                                isActive ? "text-zinc-100" : "text-zinc-500 hover:text-zinc-200",
+                              )}
+                            >
+                              <p className="truncate pr-6 text-[12px] font-medium leading-5">{chatHistoryTitle(item, index)}</p>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async (e) => {
+                                e.stopPropagation()
+                                if (!confirm("Delete this conversation?")) return
+                                try {
+                                  const response = await fetch(`/api/ai/session?conversationId=${encodeURIComponent(item.conversationId)}`, {
+                                    method: "DELETE",
+                                  })
+                                  if (response.ok) {
+                                    const payload = (await response.json()) as { sessions?: unknown[] }
+                                    setChatHistory(payload.sessions as typeof chatHistory)
+                                    if (isActive) {
+                                      router.push("/chat?new=1")
+                                    }
+                                  }
+                                } catch {
+                                  // Ignore deletion failures
+                                }
+                              }}
+                              className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-zinc-600 opacity-0 transition hover:bg-zinc-800 hover:text-red-400 group-hover:opacity-100"
+                              aria-label="Delete conversation"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </div>
                         )
                       })
                     ) : (

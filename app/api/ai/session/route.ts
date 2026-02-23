@@ -3,11 +3,13 @@ import { getServerSession } from "next-auth"
 
 import { authOptions } from "@/lib/auth"
 import {
+  archiveWorkflowSession,
   getLatestWorkflowSession,
   getWorkflowSessionByConversationId,
   listWorkflowSessions,
   loadOrCreateWorkflowSession,
 } from "@/lib/ai/workflow-store"
+import { deleteMessagesByConversation } from "@/lib/messaging"
 
 function mapSessionPayload(session: {
   conversationId: string
@@ -61,6 +63,28 @@ export async function GET(request: Request) {
         }
       : null,
   })
+}
+
+export async function DELETE(request: Request) {
+  const session = await getServerSession(authOptions)
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
+  const url = new URL(request.url)
+  const conversationId = url.searchParams.get("conversationId")
+  if (!conversationId) {
+    return NextResponse.json({ error: "conversationId is required" }, { status: 422 })
+  }
+
+  const [archived] = await Promise.all([
+    archiveWorkflowSession({ userId: session.user.id, conversationId }),
+    deleteMessagesByConversation({ userId: session.user.id, conversationId }),
+  ])
+
+  const sessions = await listWorkflowSessions({ userId: session.user.id })
+
+  return NextResponse.json({ deleted: archived, sessions })
 }
 
 export async function POST(request: Request) {

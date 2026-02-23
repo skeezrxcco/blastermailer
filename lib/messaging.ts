@@ -38,3 +38,30 @@ export async function listMessages(input: {
     take: Math.min(Math.max(input.limit ?? 50, 1), 200),
   })
 }
+
+export async function listMessagesByConversation(input: {
+  userId: string
+  conversationId: string
+  limit?: number
+}) {
+  return prisma.message.findMany({
+    where: {
+      userId: input.userId,
+      conversationId: input.conversationId,
+    },
+    orderBy: { createdAt: "asc" },
+    take: Math.min(Math.max(input.limit ?? 200, 1), 500),
+  })
+}
+
+export async function deleteMessagesByConversation(input: {
+  userId: string
+  conversationId: string
+}) {
+  return prisma.message.deleteMany({
+    where: {
+      userId: input.userId,
+      conversationId: input.conversationId,
+    },
+  })
+}

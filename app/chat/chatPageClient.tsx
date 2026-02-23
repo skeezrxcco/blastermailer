@@ -91,6 +91,52 @@ type CsvParseResult =
   | { ok: true; entries: EmailEntry[] }
   | { ok: false; error: string }
 
+async function persistMessage(input: {
+  role: "USER" | "ASSISTANT"
+  content: string
+  conversationId: string | null
+  metadata?: Record<string, unknown>
+}) {
+  if (!input.conversationId || !input.content.trim()) return
+  try {
+    await fetch("/api/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        role: input.role,
+        content: input.content,
+        channel: "ai",
+        conversationId: input.conversationId,
+        metadata: input.metadata,
+      }),
+    })
+  } catch {
+    // Ignore persistence failures — messages are still in local state.
+  }
+}
+
+async function loadConversationMessages(conversationId: string): Promise<Message[]> {
+  try {
+    const response = await fetch(`/api/messages?conversationId=${encodeURIComponent(conversationId)}`, {
+      method: "GET",
+      cache: "no-store",
+    })
+    if (!response.ok) return []
+    const payload = (await response.json()) as {
+      messages?: Array<{ role: string; content: string; metadata?: Record<string, unknown> | null; createdAt?: string }>
+    }
+    return (payload.messages ?? []).map((m, i) => ({
+      id: Date.now() + i,
+      role: m.role === "USER" ? ("user" as const) : ("bot" as const),
+      text: m.content,
+      kind: (m.metadata?.kind as Message["kind"]) ?? undefined,
+      templateSuggestionIds: (m.metadata?.templateSuggestionIds as string[]) ?? undefined,
+    }))
+  } catch {
+    return []
+  }
+}
+
 const viewportSpecs: Record<PreviewMode, { label: string; width: number; height: number }> = {
   desktop: { label: "Desktop", width: 1280, height: 900 },
   tablet: { label: "Tablet", width: 834, height: 1112 },
@@ -291,48 +337,44 @@ function TemplateSuggestionCard({
   onPreview: () => void
   onSelect: () => void
 }) {
-  const [hovered, setHovered] = useState(false)
   const [cardHovered, setCardHovered] = useState(false)
   const previewData = buildEditorData(template.theme, template)
 
   return (
     <Card
-      className="h-[390px] w-[282px] shrink-0 rounded-[24px] border-0 bg-zinc-950/55 p-0 sm:w-[312px]"
+      className="h-[280px] w-[220px] shrink-0 rounded-2xl border-0 bg-zinc-950/55 p-0 sm:w-[240px]"
       onMouseEnter={() => setCardHovered(true)}
       onMouseLeave={() => setCardHovered(false)}
     >
-      <CardContent className="flex h-full flex-col p-3">
-        <div className="mb-2 flex items-start justify-between gap-2">
-          <div>
-            <p className="text-sm font-semibold text-zinc-100">{template.name}</p>
-            <p className="text-xs text-zinc-400">
+      <CardContent className="flex h-full flex-col p-2.5">
+        <div className="mb-1.5 flex items-start justify-between gap-1.5">
+          <div className="min-w-0">
+            <p className="truncate text-xs font-semibold text-zinc-100">{template.name}</p>
+            <p className="truncate text-[10px] text-zinc-400">
               {template.theme} · {template.audience}
             </p>
           </div>
-          {selected ? <Badge className="rounded-full bg-emerald-500/20 text-emerald-200">Selected</Badge> : null}
+          {selected ? <Badge className="shrink-0 rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[9px] text-emerald-200">Selected</Badge> : null}
         </div>
 
-        <TemplatePreview template={template} data={previewData} heightClass="h-44" autoScroll={cardHovered} />
+        <TemplatePreview template={template} data={previewData} heightClass="h-32" autoScroll={cardHovered} />
 
-        <p className="mt-2 text-xs leading-relaxed text-zinc-300">{template.description}</p>
-        <p className="text-[11px] uppercase tracking-wide text-zinc-500">{template.tone}</p>
+        <p className="mt-1.5 line-clamp-2 text-[10px] leading-relaxed text-zinc-300">{template.description}</p>
 
-        <div className="mt-auto grid grid-cols-2 gap-2 pt-2">
+        <div className="mt-auto grid grid-cols-2 gap-1.5 pt-1.5">
           <Button
             size="sm"
-            onMouseEnter={() => setHovered(true)}
-            onMouseLeave={() => setHovered(false)}
-            className="rounded-xl bg-zinc-900/80 text-zinc-100 hover:bg-zinc-800"
+            className="h-7 rounded-lg bg-zinc-900/80 text-[11px] text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
             onClick={onPreview}
           >
-            <EyeIcon size={14} className={cn("h-3.5 w-3.5", hovered ? "text-zinc-100" : "text-zinc-300")} />
+            Preview
           </Button>
           <Button
             size="sm"
             onClick={onSelect}
             className={cn(
-              "rounded-xl",
-              selected ? "bg-zinc-800 text-zinc-100 hover:bg-zinc-800" : "bg-zinc-100 text-zinc-900 hover:bg-zinc-200",
+              "h-7 rounded-lg text-[11px]",
+              selected ? "bg-emerald-500/20 text-emerald-200 hover:bg-emerald-500/30" : "bg-zinc-100 text-zinc-900 hover:bg-zinc-200",
             )}
           >
             {selected ? "Selected" : "Select"}
@@ -1347,6 +1389,9 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
   const [editorViewport, setEditorViewport] = useState<PreviewMode>("desktop")
   const [isPreviewOpen, setIsPreviewOpen] = useState(false)
   const [isEditorOpen, setIsEditorOpen] = useState(false)
+  const [previewOnlyTemplate, setPreviewOnlyTemplate] = useState<TemplateOption | null>(null)
+  const [previewOnlyData, setPreviewOnlyData] = useState<TemplateEditorData | null>(null)
+  const [previewOnlyTheme, setPreviewOnlyTheme] = useState<EditorThemeState | null>(null)
   const [composerMode, setComposerMode] = useState<"prompt" | "emails">("prompt")
   const [emailEntries, setEmailEntries] = useState<EmailEntry[]>([])
   const [isCsvProcessing, setIsCsvProcessing] = useState(false)
@@ -1387,10 +1432,13 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
     setEmailEntries([])
     setComposerMode("prompt")
     if (announce) {
-      setMessages((prev) => [
-        ...prev,
-        { id: Date.now(), role: "bot", text: confirmedTemplateNotice(template.name), kind: "templateReview" },
-      ])
+      setMessages((prev) => {
+        const withoutOldReviews = prev.filter((m) => m.kind !== "templateReview")
+        return [
+          ...withoutOldReviews,
+          { id: Date.now(), role: "bot", text: confirmedTemplateNotice(template.name), kind: "templateReview" },
+        ]
+      })
     }
   }
 
@@ -1408,7 +1456,7 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
     setIsEditorOpen(false)
   }
 
-  const applySessionToUi = (session: ChatSessionSummary, options?: { injectSummaryMessage?: boolean }) => {
+  const applySessionToUi = async (session: ChatSessionSummary, options?: { injectSummaryMessage?: boolean }) => {
     setConversationId(session.conversationId)
     setWorkflowState(session.state || "INTENT_CAPTURE")
     setComposerMode(session.state === "AUDIENCE_COLLECTION" || session.state === "VALIDATION_REVIEW" ? "emails" : "prompt")
@@ -1424,7 +1472,10 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
       setThemeState(null)
     }
 
-    if (options?.injectSummaryMessage) {
+    const loaded = await loadConversationMessages(session.conversationId)
+    if (loaded.length > 0) {
+      setMessages(loaded)
+    } else if (options?.injectSummaryMessage) {
       const summary = session.summary?.trim()
       setMessages(
         summary
@@ -1606,6 +1657,8 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
     const resolvedMode = !isPaidPlan && chosenModel.requiresPro ? "essential" : chosenModel.mode
     let activeConversationId = conversationId
 
+    void persistMessage({ role: "USER", content: value, conversationId: activeConversationId })
+
     setIsAiResponding(true)
     try {
       const response = await fetch("/api/ai/stream", {
@@ -1766,6 +1819,19 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
         }
       }
 
+      if (streamedText) {
+        void persistMessage({
+          role: "ASSISTANT",
+          content: streamedText,
+          conversationId: activeConversationId,
+          metadata: {
+            kind: assistantKind,
+            templateSuggestionIds: suggestionIds,
+            campaignId: pendingCampaignId,
+          },
+        })
+      }
+
       if (doneState === "QUEUED") {
         const campaignId = pendingCampaignId ?? `cmp-${Date.now().toString().slice(-8)}`
         const validAudience = computeValidationStats(emailEntries).valid
@@ -1894,23 +1960,107 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
     setEmailEntries((prev) => normalizeEmailEntries(prev.filter((entry) => entry.id !== id)))
   }
 
-  const confirmSendCampaign = () => {
-    if (!selectedTemplate) return
+  const confirmSendCampaign = async () => {
+    if (!selectedTemplate || !templateData) return
     const stats = computeValidationStats(emailEntries)
     if (stats.valid === 0) return
 
     const campaignId = `cmp-${Date.now().toString().slice(-8)}`
+    const validEmails = emailEntries.filter((e) => e.status === "valid").map((e) => e.value)
 
     setMessages((prev) => [
       ...prev,
       {
         id: Date.now(),
         role: "bot",
-        text: `Campaign queued. Opening campaigns workspace. Queue ID: ${campaignId}`,
+        text: `Sending campaign to ${stats.valid} recipients...`,
+        campaignId,
       },
     ])
     setComposerMode("prompt")
-    router.push(`/campaigns?campaign=${campaignId}&template=${encodeURIComponent(selectedTemplate.name)}&audience=${stats.valid}`)
+
+    try {
+      const response = await fetch("/api/campaigns/queue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          campaignId,
+          subject: templateData.subjectLine || selectedTemplate.name,
+          htmlContent: templateData.headline || "Campaign content",
+          recipientEmails: validEmails,
+          smtpSource: "platform",
+        }),
+      })
+
+      if (!response.ok) {
+        if (response.status === 429) {
+          const errorData = (await response.json()) as { error?: string; quota?: { remaining: number; limit: number } }
+          throw new Error(errorData.error ?? "Email quota exceeded")
+        }
+        throw new Error("Failed to queue campaign")
+      }
+
+      const result = (await response.json()) as { jobId?: string }
+      const jobId = result.jobId ?? campaignId
+      
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.campaignId === campaignId
+            ? { ...m, text: `Campaign queued! Sending to ${stats.valid} recipients... (0/${stats.valid})` }
+            : m,
+        ),
+      )
+
+      const eventSource = new EventSource(`/api/campaigns/progress?jobId=${encodeURIComponent(jobId)}`)
+      
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data) as { status?: string; sent?: number; total?: number; failed?: number }
+          
+          if (data.status === "completed") {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.campaignId === campaignId
+                  ? { ...m, text: `✓ Campaign sent successfully! ${data.sent ?? stats.valid}/${data.total ?? stats.valid} delivered.` }
+                  : m,
+              ),
+            )
+            eventSource.close()
+          } else if (data.status === "failed") {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.campaignId === campaignId
+                  ? { ...m, text: `✗ Campaign failed. ${data.sent ?? 0} sent, ${data.failed ?? 0} failed.` }
+                  : m,
+              ),
+            )
+            eventSource.close()
+          } else if (data.status === "processing") {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.campaignId === campaignId
+                  ? { ...m, text: `Sending campaign... ${data.sent ?? 0}/${data.total ?? stats.valid} sent` }
+                  : m,
+              ),
+            )
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      }
+
+      eventSource.onerror = () => {
+        eventSource.close()
+      }
+    } catch (error) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.campaignId === campaignId
+            ? { ...m, text: `Failed to send campaign: ${error instanceof Error ? error.message : "Unknown error"}` }
+            : m,
+        ),
+      )
+    }
   }
 
   const showHero = messages.length === 0 && workflowState === "INTENT_CAPTURE" && !isAiResponding
@@ -2021,20 +2171,17 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
         {!isComposerStacked ? renderModeSelector() : null}
         {!isComposerStacked ? renderUpgradeCta() : null}
       </div>
-      <div
-        className={cn(
-          "overflow-hidden transition-all duration-300 ease-out",
-          isComposerStacked ? "mt-2 max-h-12 opacity-100" : "max-h-0 opacity-0",
-        )}
-      >
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            {renderUploadButton(!canUploadCsv)}
-            {renderModeSelector()}
+      {isComposerStacked ? (
+        <div className="mt-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              {renderUploadButton(!canUploadCsv)}
+              {renderModeSelector()}
+            </div>
+            {renderUpgradeCta()}
           </div>
-          {renderUpgradeCta()}
         </div>
-      </div>
+      ) : null}
       {isOutOfCredits ? (
         <div className="mt-2 flex items-center justify-between rounded-xl bg-zinc-950/70 px-3 py-2 text-xs">
           <span className="text-zinc-400">Monthly quota used up.</span>
@@ -2101,7 +2248,9 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
                                 template={template}
                                 selected={selected}
                                 onPreview={() => {
-                                  applyTemplateSelection(template, false)
+                                  setPreviewOnlyTemplate(template)
+                                  setPreviewOnlyData(buildEditorData(template.theme, template))
+                                  setPreviewOnlyTheme(createThemeState(template))
                                   setPreviewViewport("desktop")
                                   setIsPreviewOpen(true)
                                 }}
@@ -2175,15 +2324,20 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
         )}
       </div>
 
-      {isPreviewOpen && selectedTemplate && templateData && themeState ? (
+      {isPreviewOpen && (previewOnlyTemplate || selectedTemplate) && (previewOnlyData || templateData) && (previewOnlyTheme || themeState) ? (
         <TemplatePreviewModal
-          template={selectedTemplate}
-          data={templateData}
-          theme={themeState}
+          template={(previewOnlyTemplate ?? selectedTemplate)!}
+          data={(previewOnlyData ?? templateData)!}
+          theme={(previewOnlyTheme ?? themeState)!}
           dishOrder={dishOrder}
           viewport={previewViewport}
           onViewportChange={setPreviewViewport}
-          onClose={() => setIsPreviewOpen(false)}
+          onClose={() => {
+            setIsPreviewOpen(false)
+            setPreviewOnlyTemplate(null)
+            setPreviewOnlyData(null)
+            setPreviewOnlyTheme(null)
+          }}
         />
       ) : null}
 
