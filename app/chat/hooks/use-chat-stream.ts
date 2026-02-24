@@ -18,26 +18,37 @@ type StreamCallbacks = {
   setIsAiResponding: (v: boolean) => void
   applyTemplateSelection: (template: NonNullable<ReturnType<typeof templateOptions.find>>, announce: boolean) => void
   onQueued: (campaignId: string, validAudience: number, templateName: string) => void
+  onGeneratedHtml?: (html: string, subject: string | null) => void
+  onConversationReady?: (conversationId: string) => void
 }
 
 export function useChatStream() {
   const streamPrompt = async (
     value: string,
-    assistantMessageId: number,
+    assistantMessageId: string | number,
     callbacks: StreamCallbacks,
   ) => {
     const {
       isPaidPlan, conversationId, selectedModelChoice, selectedSpecificModel,
       setConversationId, setWorkflowState, setComposerMode, setMessages,
-      setIsAiResponding, applyTemplateSelection, onQueued,
+      setIsAiResponding, applyTemplateSelection, onQueued, onGeneratedHtml, onConversationReady,
     } = callbacks
 
     const chosenModel = modelChoices.find((o) => o.id === selectedModelChoice) ?? modelChoices[0]
     const resolvedMode: AiQualityMode = !isPaidPlan && chosenModel.requiresPro ? "fast" : chosenModel.mode
     const resolvedSpecificModel = resolvedMode === chosenModel.mode ? selectedSpecificModel : null
     let activeConversationId = conversationId
+    let userMessagePersisted = false
 
-    void persistMessage({ role: "USER", content: value, conversationId: activeConversationId })
+    const persistPendingUserMessage = (nextConversationId?: string | null) => {
+      if (userMessagePersisted) return
+      const resolvedConversationId = nextConversationId ?? activeConversationId
+      if (!resolvedConversationId) return
+      userMessagePersisted = true
+      void persistMessage({ role: "USER", content: value, conversationId: resolvedConversationId })
+    }
+
+    persistPendingUserMessage(activeConversationId)
 
     setIsAiResponding(true)
     try {
@@ -64,6 +75,8 @@ export function useChatStream() {
       let suggestionIds: string[] | undefined
       let pendingCampaignId: string | undefined
       let doneState: string | undefined
+      let generatedHtml: string | undefined
+      let generatedSubject: string | undefined
 
       const updateAssistant = (patch: Partial<Message>) => {
         setMessages((prev) => prev.map((m) => (m.id === assistantMessageId ? { ...m, ...patch } : m)))
@@ -85,7 +98,9 @@ export function useChatStream() {
 
           if (event.type === "session") {
             activeConversationId = event.conversationId
+            persistPendingUserMessage(event.conversationId)
             setConversationId(event.conversationId)
+            onConversationReady?.(event.conversationId)
             setWorkflowState(event.state)
           } else if (event.type === "state_patch") {
             setWorkflowState(event.state)
@@ -97,15 +112,29 @@ export function useChatStream() {
           } else if (event.type === "tool_result") {
             if (event.result.templateSuggestions?.length) { suggestionIds = event.result.templateSuggestions.map((t) => t.id); assistantKind = "suggestions" }
             if (event.result.campaignId) pendingCampaignId = event.result.campaignId
+            if (event.result.generatedHtml) {
+              generatedHtml = event.result.generatedHtml
+              generatedSubject = event.result.generatedSubject ?? generatedSubject
+              onGeneratedHtml?.(event.result.generatedHtml, event.result.generatedSubject ?? null)
+            }
           } else if (event.type === "token") {
             streamedText += event.token
-            updateAssistant({ text: streamedText, kind: assistantKind, templateSuggestionIds: suggestionIds, campaignId: pendingCampaignId })
+            updateAssistant({
+              text: streamedText,
+              kind: assistantKind,
+              templateSuggestionIds: suggestionIds,
+              campaignId: pendingCampaignId,
+              generatedHtml,
+              generatedSubject,
+            })
           } else if (event.type === "moderation") {
-            setMessages((prev) => [...prev, { id: Date.now() + 3, role: "bot", text: event.message }])
+            setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "bot", text: event.message }])
           } else if (event.type === "done") {
             doneState = event.state
             activeConversationId = event.conversationId
+            persistPendingUserMessage(event.conversationId)
             setConversationId(event.conversationId)
+            onConversationReady?.(event.conversationId)
             setWorkflowState(event.state)
             if (event.selectedTemplateId) {
               const t = templateOptions.find((e) => e.id === event.selectedTemplateId)
@@ -116,27 +145,73 @@ export function useChatStream() {
             if (event.state === "VALIDATION_REVIEW") { setComposerMode("emails"); assistantKind = assistantKind ?? "validation" }
             pendingCampaignId = event.campaignId ?? pendingCampaignId
             streamedText = event.text || streamedText
-            updateAssistant({ text: streamedText || "Done.", kind: assistantKind, templateSuggestionIds: suggestionIds, campaignId: pendingCampaignId })
+            if (event.generatedHtml) {
+              generatedHtml = event.generatedHtml
+              generatedSubject = event.generatedSubject ?? generatedSubject
+              onGeneratedHtml?.(event.generatedHtml, event.generatedSubject ?? null)
+            }
+            updateAssistant({
+              text: streamedText || "Done.",
+              kind: assistantKind,
+              templateSuggestionIds: suggestionIds,
+              campaignId: pendingCampaignId,
+              generatedHtml,
+              generatedSubject,
+            })
           } else if (event.type === "error") {
             throw new Error(event.error)
           }
         }
       }
 
+      persistPendingUserMessage(activeConversationId)
+
       if (streamedText) {
-        void persistMessage({ role: "ASSISTANT", content: streamedText, conversationId: activeConversationId, metadata: { kind: assistantKind, templateSuggestionIds: suggestionIds, campaignId: pendingCampaignId } })
+        void persistMessage({
+          role: "ASSISTANT",
+          content: streamedText,
+          conversationId: activeConversationId,
+          metadata: {
+            kind: assistantKind,
+            templateSuggestionIds: suggestionIds,
+            campaignId: pendingCampaignId,
+            generatedHtml,
+            generatedSubject,
+          },
+        })
+      }
+
+      // Trigger sidebar chat history refresh so the new conversation appears immediately
+      if (activeConversationId) {
+        try { window.dispatchEvent(new CustomEvent("bm:chat-history-refresh")) } catch { /* ignore */ }
       }
 
       if (doneState === "QUEUED") {
         onQueued(pendingCampaignId ?? `cmp-${Date.now().toString().slice(-8)}`, 0, "")
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not generate an AI response."
+      const raw = error instanceof Error ? error.message : "Could not generate an AI response."
+      // Extract a human-friendly message from verbose provider errors
+      let message = raw
+      const currentMode = modelChoices.find((o) => o.id === selectedModelChoice)?.label ?? selectedModelChoice
+      if (raw.includes("429") || raw.includes("quota") || raw.includes("RESOURCE_EXHAUSTED")) {
+        message = `The "${currentMode}" model hit its rate limit. Try switching to a different model (e.g. Fast) or wait a minute.`
+      } else if (raw.includes("401") || raw.includes("403")) {
+        message = `The "${currentMode}" model provider returned an auth error. Try a different model or check API key configuration.`
+      } else if (raw.includes("All AI providers failed")) {
+        message = `All AI providers failed for "${currentMode}" mode. Try switching to a different model.`
+      } else if (raw.includes("credits exhausted") || raw.includes("limit reached")) {
+        message = "AI usage limit reached. Please wait for your credits to refresh or upgrade your plan."
+      } else if (raw.includes("No eligible AI provider") || raw.includes("No AI providers are allowed")) {
+        message = `No AI providers available for "${currentMode}" mode. Try switching to Fast mode.`
+      } else if (raw.length > 200) {
+        message = raw.slice(0, 200) + "…"
+      }
       setMessages((prev) => {
         let replaced = false
-        const next = prev.map((entry) => { if (entry.id !== assistantMessageId) return entry; replaced = true; return { ...entry, text: `AI error: ${message}` } })
+        const next = prev.map((entry) => { if (entry.id !== assistantMessageId) return entry; replaced = true; return { ...entry, text: message } })
         if (replaced) return next
-        return [...next, { id: Date.now() + 2, role: "bot", text: `AI error: ${message}` }]
+        return [...next, { id: crypto.randomUUID(), role: "bot", text: message }]
       })
     } finally {
       setIsAiResponding(false)

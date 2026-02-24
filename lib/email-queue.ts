@@ -119,6 +119,8 @@ function resolveEmailSource(smtpConfig: SmtpConfig, userPlan?: string): SmtpSour
   if (smtpConfig.source === "user" || smtpConfig.source === "dedicated") {
     return smtpConfig.source
   }
+  const isProduction = process.env.NODE_ENV === "production"
+  if (!isProduction) return "platform"
   const isPro = ["pro", "premium", "enterprise"].includes((userPlan ?? "").toLowerCase())
   return isPro ? "ses" : "mailrelay"
 }
@@ -214,8 +216,20 @@ async function sendSingleEmail(
   input: { to: string; subject: string; html?: string; text?: string; from?: string },
   userPlan?: string,
 ): Promise<SendEmailResult> {
+  const isProduction = process.env.NODE_ENV === "production"
+
   if (smtpConfig.source === "user") {
     return sendWithUserSmtp(smtpConfig, input)
+  }
+
+  if (!isProduction) {
+    return sendEmail({
+      to: input.to,
+      subject: input.subject,
+      html: input.html,
+      text: input.text,
+      from: input.from ?? smtpConfig.from,
+    })
   }
 
   const effectiveSource = resolveEmailSource(smtpConfig, userPlan)
@@ -282,6 +296,12 @@ async function processJob(job: EmailQueueJob) {
         recipient.status = "failed"
         recipient.error = error instanceof Error ? error.message : "Send failed"
         job.progress.failed += 1
+        console.error("[email-queue] recipient send failed", {
+          jobId: job.id,
+          campaignId: job.campaignId,
+          recipientEmail: recipient.email,
+          error: recipient.error,
+        })
       }
 
       notifyProgress(job.id, {
@@ -353,9 +373,14 @@ export function enqueueEmailJob(input: {
   activeJobs.set(jobId, job)
 
   setImmediate(() => {
-    processJob(job).catch(() => {
+    processJob(job).catch((error) => {
       job.status = "failed"
       job.completedAt = new Date()
+      console.error("[email-queue] job processing failed", {
+        jobId: job.id,
+        campaignId: job.campaignId,
+        error: error instanceof Error ? error.message : String(error),
+      })
     })
   })
 

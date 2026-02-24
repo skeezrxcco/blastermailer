@@ -52,14 +52,10 @@ export function AnimatedBotText({ text }: { text: string }) {
 
 export function AssistantSignal() {
   return (
-    <div className="flex justify-start">
-      <div className="inline-flex items-center gap-2 rounded-full bg-zinc-900/70 px-3 py-2">
-        <span className="relative flex h-2.5 w-2.5">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-300/35" />
-          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-sky-300/85" />
-        </span>
-        <span className="h-1.5 w-12 animate-pulse rounded-full bg-zinc-700" />
-      </div>
+    <div className="flex items-center gap-1.5 py-1">
+      <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-500" style={{ animationDelay: "0ms" }} />
+      <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-500" style={{ animationDelay: "150ms" }} />
+      <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-500" style={{ animationDelay: "300ms" }} />
     </div>
   )
 }

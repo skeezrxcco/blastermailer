@@ -4,6 +4,10 @@ import { NextResponse } from "next/server"
 import { authOptions } from "@/lib/auth"
 import { getJobStatus, subscribeToJobProgress, type EmailQueueProgressEvent } from "@/lib/email-queue"
 
+function resolveFailureReason(job: NonNullable<ReturnType<typeof getJobStatus>>) {
+  return job.recipients.find((recipient) => recipient.status === "failed" && recipient.error)?.error ?? null
+}
+
 export async function GET(request: Request) {
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) {
@@ -25,22 +29,39 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 })
   }
 
-  if (job.status === "completed" || job.status === "failed") {
-    return NextResponse.json({
-      jobId: job.id,
-      campaignId: job.campaignId,
-      status: job.status,
-      progress: job.progress,
-      completedAt: job.completedAt?.toISOString() ?? null,
-    })
-  }
-
   const encoder = new TextEncoder()
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const sendEvent = (event: EmailQueueProgressEvent) => {
         const data = JSON.stringify(event)
         controller.enqueue(encoder.encode(`data: ${data}\n\n`))
+      }
+
+      const pushCompleteEvent = (status: "completed" | "failed", progress: typeof job.progress, error?: string | null) => {
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({
+              type: "complete",
+              status,
+              progress,
+              ...(error ? { error } : {}),
+            })}\n\n`,
+          ),
+        )
+      }
+
+      if (job.status === "completed" || job.status === "failed") {
+        sendEvent({
+          jobId: job.id,
+          campaignId: job.campaignId,
+          recipientEmail: "",
+          status: job.status === "failed" ? "failed" : "sent",
+          error: job.status === "failed" ? resolveFailureReason(job) ?? undefined : undefined,
+          progress: { ...job.progress },
+        })
+        pushCompleteEvent(job.status, { ...job.progress }, resolveFailureReason(job))
+        controller.close()
+        return
       }
 
       sendEvent({
@@ -58,11 +79,12 @@ export async function GET(request: Request) {
           const isDone =
             event.progress.sent + event.progress.failed >= event.progress.total
           if (isDone) {
-            controller.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({ type: "complete", progress: event.progress })}\n\n`,
-              ),
-            )
+            const latestJob = getJobStatus(jobId)
+            const status = latestJob?.status === "failed" ? "failed" : "completed"
+            const error = status === "failed"
+              ? (event.error ?? (latestJob ? resolveFailureReason(latestJob) : null))
+              : null
+            pushCompleteEvent(status, event.progress, error)
             controller.close()
             unsubscribe()
           }

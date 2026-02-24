@@ -7,31 +7,23 @@ import {
   DropdownMenuContent,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { modelChoices, specificModelOptions } from "@/app/chat/chat-page.types"
+import { modelChoices } from "@/app/chat/chat-page.types"
+import type { AvailableMode } from "@/hooks/use-ai-models"
 
 export function AiModeSelector({
   selectedModelChoice,
-  selectedSpecificModel,
-  isPaidPlan,
   isOutOfCredits,
   onModelChoiceChange,
-  onSpecificModelChange,
+  availableModes,
 }: {
   selectedModelChoice: string
-  selectedSpecificModel: string | null
-  isPaidPlan: boolean
   isOutOfCredits: boolean
   onModelChoiceChange: (id: string) => void
-  onSpecificModelChange: (id: string | null) => void
+  availableModes: AvailableMode[]
 }) {
   const activeChoice = modelChoices.find((c) => c.id === selectedModelChoice) ?? modelChoices[0]
-  const activeSpecific = specificModelOptions.find((m) => m.id === selectedSpecificModel)
 
   return (
     <DropdownMenu>
@@ -39,66 +31,35 @@ export function AiModeSelector({
         <button
           type="button"
           disabled={isOutOfCredits}
-          className="flex h-9 items-center gap-1.5 rounded-full bg-zinc-950/80 pl-3.5 pr-3 text-[11px] font-medium text-zinc-200 outline-none transition hover:bg-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-500"
+          className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1 text-left outline-none transition hover:bg-zinc-800/40 disabled:cursor-not-allowed disabled:opacity-40"
           aria-label="AI model"
         >
-          <span>{activeChoice.label}</span>
-          {activeSpecific ? (
-            <span className="text-zinc-500">· {activeSpecific.label}</span>
-          ) : null}
-          <span className="flex items-center gap-0.5 rounded-full bg-zinc-800/80 px-1.5 py-0.5">
-            <span className="text-[10px] font-medium text-zinc-400">{activeChoice.quotaMultiplier}x</span>
-            <ChevronDown className="h-3 w-3 text-zinc-400" />
-          </span>
+          <span className="text-[11px] font-medium text-zinc-300">{activeChoice.label}</span>
+          <ChevronDown className="h-2.5 w-2.5 text-zinc-500" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-56">
+      <DropdownMenuContent align="start" className="w-44 border-zinc-800 bg-zinc-950 p-1">
         <DropdownMenuRadioGroup value={selectedModelChoice} onValueChange={onModelChoiceChange}>
           {modelChoices.map((choice) => {
-            const locked = !isPaidPlan && choice.requiresPro
-            const modelsForMode = specificModelOptions.filter((m) => m.mode === choice.mode)
-
-            if (modelsForMode.length === 0) {
-              return (
-                <DropdownMenuRadioItem
-                  key={choice.id}
-                  value={choice.id}
-                  disabled={locked}
-                  className="text-sm"
-                >
-                  <span className="flex-1">{choice.label}</span>
-                  {locked ? <span className="text-[10px] text-zinc-500">Pro</span> : null}
-                </DropdownMenuRadioItem>
-              )
-            }
+            const modeInfo = availableModes.find((m) => m.mode === choice.mode)
+            const notAvailable = modeInfo ? !modeInfo.available : false
+            const locked = modeInfo?.locked ?? false
+            const disabled = notAvailable || locked
 
             return (
-              <DropdownMenuSub key={choice.id}>
-                <DropdownMenuSubTrigger disabled={locked} className="text-sm">
-                  <span className="flex-1">{choice.label}</span>
-                  {locked ? <span className="text-[10px] text-zinc-500">Pro</span> : null}
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="w-52">
-                  <DropdownMenuRadioGroup
-                    value={selectedModelChoice === choice.id ? (selectedSpecificModel ?? "default") : ""}
-                    onValueChange={(value) => {
-                      onModelChoiceChange(choice.id)
-                      onSpecificModelChange(value === "default" ? null : value)
-                    }}
-                  >
-                    <DropdownMenuRadioItem value="default" className="text-xs">
-                      <span className="flex-1">Default</span>
-                      <span className="text-[10px] text-zinc-500">{choice.quotaMultiplier}x</span>
-                    </DropdownMenuRadioItem>
-                    <DropdownMenuSeparator />
-                    {modelsForMode.map((model) => (
-                      <DropdownMenuRadioItem key={model.id} value={model.id} className="text-xs">
-                        {model.label}
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
+              <DropdownMenuRadioItem
+                key={choice.id}
+                value={choice.id}
+                disabled={disabled}
+                className="rounded-sm text-xs text-zinc-300 focus:bg-zinc-800/40 focus:text-zinc-100"
+              >
+                <span className="flex-1">{choice.label}</span>
+                {locked ? (
+                  <span className="text-[10px] text-zinc-600">Pro</span>
+                ) : notAvailable ? (
+                  <span className="text-[10px] text-zinc-600">N/A</span>
+                ) : null}
+              </DropdownMenuRadioItem>
             )
           })}
         </DropdownMenuRadioGroup>

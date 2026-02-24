@@ -211,12 +211,15 @@ export async function loadConversationMessages(conversationId: string): Promise<
     const payload = (await response.json()) as {
       messages?: Array<{ role: string; content: string; metadata?: Record<string, unknown> | null; createdAt?: string }>
     }
-    return (payload.messages ?? []).map((m, i) => ({
-      id: Date.now() + i,
+    return (payload.messages ?? []).map((m) => ({
+      id: crypto.randomUUID(),
       role: m.role === "USER" ? ("user" as const) : ("bot" as const),
       text: m.content,
       kind: (m.metadata?.kind as Message["kind"]) ?? undefined,
       templateSuggestionIds: (m.metadata?.templateSuggestionIds as string[]) ?? undefined,
+      campaignId: typeof m.metadata?.campaignId === "string" ? m.metadata.campaignId : undefined,
+      generatedHtml: typeof m.metadata?.generatedHtml === "string" ? m.metadata.generatedHtml : undefined,
+      generatedSubject: typeof m.metadata?.generatedSubject === "string" ? m.metadata.generatedSubject : undefined,
     }))
   } catch {
     return []

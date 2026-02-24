@@ -58,6 +58,7 @@ export type ToolName =
   | "confirm_queue_campaign"
   | "compose_simple_email"
   | "compose_signature_email"
+  | "generate_hbs_template"
 
 export type ToolResultPayload = {
   text?: string
@@ -65,6 +66,8 @@ export type ToolResultPayload = {
   selectedTemplateId?: string
   recipientStats?: RecipientValidationStats
   campaignId?: string
+  generatedHtml?: string
+  generatedSubject?: string
 }
 
 export type AiStreamEvent =
@@ -113,6 +116,8 @@ export type AiStreamEvent =
       templateSuggestions?: TemplateSuggestion[]
       recipientStats?: RecipientValidationStats | null
       campaignId?: string | null
+      generatedHtml?: string | null
+      generatedSubject?: string | null
       remainingCredits?: number | null
       maxCredits?: number | null
       /** Estimated provider cost in EUR for this request (telemetry) */

@@ -212,7 +212,27 @@ export async function isBudgetExhausted(input: { userId: string; userPlan?: stri
   return snapshot.budgetExhausted
 }
 
+function isCreditsDisabled(): boolean {
+  const v = (process.env.AI_CREDITS_DISABLED ?? "").trim().toLowerCase()
+  return v === "true" || v === "1" || v === "yes"
+}
+
 export async function assertMinimumCredits(input: { userId: string; userPlan?: string; minimumCredits: number }) {
+  if (isCreditsDisabled()) {
+    return {
+      limited: false,
+      maxCredits: null,
+      remainingCredits: null,
+      usedCredits: null,
+      windowHours: null,
+      resetAt: null,
+      congestion: "low" as const,
+      monthlyBudgetEur: 999,
+      remainingBudgetEur: 999,
+      budgetExhausted: false,
+    } satisfies AiCreditsSnapshot
+  }
+
   const snapshot = await getAiCreditsSnapshot(input)
   if (!snapshot.limited) return snapshot
 
@@ -237,6 +257,22 @@ export async function consumeAiCredits(input: {
   credits: number
   cachedSnapshot?: AiCreditsSnapshot
 }) {
+  if (isCreditsDisabled()) {
+    const snapshot: AiCreditsSnapshot = {
+      limited: false,
+      maxCredits: null,
+      remainingCredits: null,
+      usedCredits: null,
+      windowHours: null,
+      resetAt: null,
+      congestion: "low",
+      monthlyBudgetEur: 999,
+      remainingBudgetEur: 999,
+      budgetExhausted: false,
+    }
+    return { charged: 0, snapshot }
+  }
+
   if (isPaidPlan(input.userPlan)) {
     const snapshot = input.cachedSnapshot ?? (await getAiCreditsSnapshot({ userId: input.userId, userPlan: input.userPlan }))
     if (snapshot.remainingBudgetEur <= 0) {

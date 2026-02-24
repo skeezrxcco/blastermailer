@@ -14,12 +14,22 @@ function normalize(text: string) {
 }
 
 function scoreTemplate(template: (typeof templateOptions)[number], query: string) {
-  const candidate = normalize(`${template.name} ${template.theme} ${template.domain} ${template.tone}`)
-  const tokens = normalize(query)
+  const candidate = normalize(
+    `${template.name} ${template.theme} ${template.domain} ${template.tone} ${template.description} ${template.audience}`,
+  )
+  const queryNorm = normalize(query)
+  const tokens = queryNorm
     .split(/\s+/)
     .filter((token) => token.length > 2)
 
-  return tokens.reduce((score, token) => (candidate.includes(token) ? score + 1 : score), 0)
+  let score = tokens.reduce((acc, token) => (candidate.includes(token) ? acc + 1 : acc), 0)
+
+  // Bonus for exact domain match (e.g. "real estate" matches "Real Estate" domain)
+  if (normalize(template.domain).includes(queryNorm) || queryNorm.includes(normalize(template.domain))) {
+    score += 3
+  }
+
+  return score
 }
 
 function toSuggestion(template: (typeof templateOptions)[number]): TemplateSuggestion {
@@ -72,99 +82,58 @@ export function executeTool(input: ToolExecutionInput): ToolResultPayload {
   const isProUser = normalizedPlan === "pro" || normalizedPlan === "premium" || normalizedPlan === "enterprise"
 
   if (tool === "ask_campaign_type") {
-    return {
-      text: "Great, what are you sending today: newsletter, promo, product update, or one-off email?",
-    }
+    return {}
   }
 
   if (tool === "suggest_templates") {
     const query = String(input.args.query ?? input.context.goal ?? "")
-    const ranked = templateOptions
+    const scored = templateOptions
       .filter((template) => isProUser || template.accessTier !== "pro")
-      .sort((a, b) => scoreTemplate(b, query) - scoreTemplate(a, query))
+      .map((template) => ({ template, score: scoreTemplate(template, query) }))
+      .filter(({ score }) => score >= 1)
+      .sort((a, b) => b.score - a.score)
       .slice(0, 4)
-      .map(toSuggestion)
 
-    return {
-      text: "I selected four template directions that best match your campaign.",
-      templateSuggestions: ranked,
+    // If no templates match the query, return empty so orchestrator
+    // can fall back to generating a custom HBS template
+    if (scored.length === 0) {
+      return { templateSuggestions: [] }
     }
+
+    return { templateSuggestions: scored.map(({ template }) => toSuggestion(template)) }
   }
 
   if (tool === "select_template") {
     const templateId = String(input.args.templateId ?? "")
     const found = templateOptions.find((template) => template.id === templateId)
-    if (!found) {
-      return {
-        text: "I could not find that template. Pick one of the suggestions and I will continue.",
-      }
-    }
-    if (!isProUser && found.accessTier === "pro") {
-      return {
-        text: `${found.name} is a Pro template. Upgrade to Pro to use it, or choose a free template and I’ll continue.`,
-      }
-    }
-    return {
-      text: `${found.name} selected. I can now help refine content and collect recipients.`,
-      selectedTemplateId: found.id,
-    }
+    if (!found) return {}
+    if (!isProUser && found.accessTier === "pro") return {}
+    return { selectedTemplateId: found.id }
   }
 
   if (tool === "request_recipients") {
-    return {
-      text: "Please paste recipient emails or upload a CSV with an email column.",
-    }
+    return {}
   }
 
   if (tool === "validate_recipients") {
     const source = String(input.args.recipients ?? "")
     const stats = parseEmails(source)
-    return {
-      text: `Validation complete: ${stats.valid} valid, ${stats.invalid} invalid, ${stats.duplicates} duplicates.`,
-      recipientStats: stats,
-    }
+    return { recipientStats: stats }
   }
 
   if (tool === "review_campaign") {
     const templateName = templateOptions.find((entry) => entry.id === input.selectedTemplateId)?.name ?? "selected template"
-    return {
-      text: [
-        `Quick review: goal captured, ${templateName} configured, and recipients validated.`,
-        "",
-        "Before we send, choose your delivery method:",
-        "- Platform SMTP (default, ready to go)",
-        "- Your own SMTP server (custom configuration)",
-        "- Dedicated SMTP (higher deliverability)",
-        "",
-        "You can also schedule for a specific time instead of sending immediately. Ready to confirm?",
-      ].join("\n"),
-    }
+    return { text: templateName }
   }
 
   if (tool === "confirm_queue_campaign") {
     const campaignId = `cmp-${Date.now().toString().slice(-8)}`
-    const smtpSource = String(input.args.smtpSource ?? "platform")
-    const schedule = input.args.scheduledAt ? String(input.args.scheduledAt) : null
-    const smtpLabel = smtpSource === "user" ? "your custom SMTP" : smtpSource === "dedicated" ? "dedicated SMTP" : "platform SMTP"
-    const scheduleLabel = schedule ? `scheduled for ${schedule}` : "queued for immediate delivery"
-
-    return {
-      text: [
-        `Campaign ${scheduleLabel} via ${smtpLabel} (ID: ${campaignId}).`,
-        "Emails will be sent through our queue system with progress tracking.",
-        "You'll receive real-time updates as each recipient is processed.",
-      ].join(" "),
-      campaignId,
-    }
+    return { campaignId }
   }
 
-  if (tool === "compose_signature_email") {
-    return {
-      text: "Perfect. I can draft a clean signature email. Tell me who it is for, the tone, and the CTA. You can send to multiple recipients at once.",
-    }
+  if (tool === "compose_signature_email" || tool === "compose_simple_email" || tool === "generate_hbs_template") {
+    return {}
   }
 
-  return {
-    text: "Got it. Tell me your goal, target audience, and CTA, and I'll draft it with you. We can send to your full mailing list when ready.",
-  }
+  return {}
 }

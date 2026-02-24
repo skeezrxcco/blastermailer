@@ -9,6 +9,13 @@ import type { AiStreamEvent, AiWorkflowIntent, AiWorkflowState, ToolName, ToolRe
 import { applyWorkflowPatch, type WorkflowMachineState } from "@/lib/ai/workflow-machine"
 import { loadOrCreateWorkflowSession, persistWorkflowState } from "@/lib/ai/workflow-store"
 import { templateOptions } from "@/components/shared/newsletter/template-data"
+import { routeToAgent, getAgentProfile, buildSkillsDescription } from "@/lib/ai/agents"
+import {
+  normalizeTemplateVariables,
+  renderEmailTemplateFromHbs,
+  resolveTemplateIdFromPrompt,
+  type TemplateRenderVariables,
+} from "@/lib/email-template-hbs"
 
 type OrchestratorInput = {
   userId: string
@@ -62,11 +69,43 @@ function normalizeTool(value: string | undefined): ToolName {
   if (candidate === "review_campaign") return "review_campaign"
   if (candidate === "confirm_queue_campaign") return "confirm_queue_campaign"
   if (candidate === "compose_signature_email") return "compose_signature_email"
+  if (candidate === "generate_hbs_template") return "generate_hbs_template"
   return "compose_simple_email"
 }
 
 function inferFallbackDecision(state: WorkflowMachineState, prompt: string): PlannerDecision {
   const normalized = prompt.toLowerCase()
+
+  // Signature detection — highest priority, checked first
+  if (normalized.includes("signature")) {
+    return {
+      tool: "compose_signature_email",
+      state: "COMPLETED",
+      intent: "SIGNATURE",
+    }
+  }
+
+  // HBS / Handlebars template generation
+  if (normalized.includes("hbs") || normalized.includes("handlebars") || normalized.includes("template") && normalized.includes("generate")) {
+    return {
+      tool: "generate_hbs_template",
+      state: "COMPLETED",
+      intent: "NEWSLETTER",
+    }
+  }
+
+  // Simple/one-off email
+  if (
+    (normalized.includes("simple") || normalized.includes("quick") || normalized.includes("one-off") || normalized.includes("draft")) &&
+    normalized.includes("email")
+  ) {
+    return {
+      tool: "compose_simple_email",
+      state: "COMPLETED",
+      intent: "SIMPLE_EMAIL",
+    }
+  }
+
   const matchedTemplate = templateOptions.find((template) => normalized.includes(template.id))
   if (matchedTemplate) {
     return {
@@ -74,7 +113,6 @@ function inferFallbackDecision(state: WorkflowMachineState, prompt: string): Pla
       args: { templateId: matchedTemplate.id },
       state: "TEMPLATE_SELECTED",
       intent: state.intent === "UNKNOWN" ? "NEWSLETTER" : state.intent,
-      response: `Great choice! I've selected ${matchedTemplate.name} for you. You can preview and customize it, then we'll collect your recipients.`,
     }
   }
 
@@ -83,77 +121,37 @@ function inferFallbackDecision(state: WorkflowMachineState, prompt: string): Pla
       tool: "validate_recipients",
       args: { recipients: prompt },
       state: "VALIDATION_REVIEW",
-      response: "Let me validate those email addresses for you. I'll check for formatting issues and duplicates.",
     }
   }
 
   if (normalized.includes("send") || normalized.includes("launch") || normalized.includes("queue")) {
+    const validRecipients = state.recipientStats?.valid ?? 0
+    if (validRecipients <= 0) {
+      return {
+        tool: "request_recipients",
+        state: "AUDIENCE_COLLECTION",
+      }
+    }
     return {
       tool: "confirm_queue_campaign",
       state: "QUEUED",
-      response: "Queuing your campaign now! Emails will be sent through our delivery system with real-time progress tracking.",
     }
   }
 
-  const emailIntentKeywords = [
-    "newsletter", "template", "email", "campaign", "promo", "promotion",
-    "announcement", "welcome", "onboarding", "launch", "update", "invite",
-    "reminder", "follow-up", "followup", "drip", "blast", "outreach",
+  // Detect intent but NEVER auto-suggest templates from fallback.
+  // The planner should decide when templates are appropriate after understanding the user's needs.
+  const newsletterKeywords = [
+    "newsletter", "campaign", "promo", "promotion",
+    "announcement", "welcome", "onboarding", "blast", "outreach",
     "retention", "reactivation", "winback", "win-back", "upsell",
-    "cross-sell", "product update", "event", "webinar", "sale",
+    "cross-sell", "event", "webinar", "sale",
   ]
-  const hasEmailIntent = emailIntentKeywords.some((kw) => normalized.includes(kw))
-
-  if (hasEmailIntent && (state.state === "INTENT_CAPTURE" || state.state === "GOAL_BRIEF")) {
-    return {
-      tool: "suggest_templates",
-      args: { query: prompt },
-      state: "TEMPLATE_DISCOVERY",
-      intent: "NEWSLETTER",
-      response: "I found some templates that match what you're going for. Pick the one that fits best — each is fully customizable, and I'll help you refine the content.",
-    }
-  }
-
-  if (state.state === "INTENT_CAPTURE" || state.state === "GOAL_BRIEF") {
-    return {
-      tool: "ask_campaign_type",
-      args: { query: prompt },
-      state: "GOAL_BRIEF",
-      intent: state.intent === "UNKNOWN" ? "UNKNOWN" : state.intent,
-      response: [
-        "Thanks for sharing that! To create the best campaign for you, I'd like to know a bit more:",
-        "",
-        "1. What type of email is this? (newsletter, promotion, announcement, etc.)",
-        "2. Who's your target audience?",
-        "3. What action do you want readers to take?",
-        "",
-        "Share whatever you have and I'll take it from there.",
-      ].join("\n"),
-    }
-  }
-
-  if (normalized.includes("signature")) {
-    return {
-      tool: "compose_signature_email",
-      state: "COMPLETED",
-      intent: "SIGNATURE",
-      response: "I can create a polished signature email for you. Tell me the recipient, the tone you want, and your main call-to-action.",
-    }
-  }
+  const hasNewsletterIntent = newsletterKeywords.some((kw) => normalized.includes(kw))
 
   return {
     tool: "ask_campaign_type",
     state: "GOAL_BRIEF",
-    intent: state.intent === "UNKNOWN" ? "UNKNOWN" : state.intent,
-    response: [
-      "I'd love to help with that! I specialize in email campaigns — here's what I can do:",
-      "",
-      "1. Create and send newsletters with professional templates",
-      "2. Build promotional or announcement emails",
-      "3. Draft signature emails",
-      "",
-      "What kind of email would you like to create? Tell me your goal and audience and I'll get you started.",
-    ].join("\n"),
+    intent: hasNewsletterIntent ? "NEWSLETTER" : (state.intent === "UNKNOWN" ? "UNKNOWN" : state.intent),
   }
 }
 
@@ -216,7 +214,7 @@ function shouldCaptureGoalPrompt(prompt: string) {
   return normalized.length >= 6
 }
 
-function buildPlannerPrompt(state: WorkflowMachineState, prompt: string) {
+function buildPlannerPrompt(state: WorkflowMachineState, prompt: string, agentId?: import("@/lib/ai/agents").AgentId) {
   const context = {
     state: state.state,
     intent: state.intent,
@@ -225,52 +223,69 @@ function buildPlannerPrompt(state: WorkflowMachineState, prompt: string) {
     context: state.context,
   }
 
+  // Resolve the active agent and its available skills
+  const routing = routeToAgent(prompt, state.state)
+  const effectiveAgentId = agentId ?? routing.agentId
+  const agent = getAgentProfile(effectiveAgentId)
+  const skillsList = buildSkillsDescription(agent.skills)
+
   return [
-    "You are the AI planner for Blastermailer, an email campaign platform.",
-    "Select exactly one tool and respond with strict JSON only.",
+    `You are the "${agent.name}" agent for Blastermailer, an email campaign platform.`,
+    agent.shortDescription,
+    "",
+    "Select exactly one skill to execute and respond with strict JSON only.",
     "",
     "JSON Schema:",
-    '{"tool":"<tool_name>","args":{},"state":"<next_state>","intent":"<intent>","response":"<your conversational response to the user>"}',
+    '{"tool":"<skill_id>","args":{},"state":"<next_state>","intent":"<intent>","response":"<your conversational response to the user>"}',
     "",
-    "Tools: ask_campaign_type | suggest_templates | select_template | request_recipients | validate_recipients | review_campaign | confirm_queue_campaign | compose_simple_email | compose_signature_email",
+    `## Your available skills`,
+    skillsList,
+    "",
     "States: INTENT_CAPTURE | GOAL_BRIEF | TEMPLATE_DISCOVERY | TEMPLATE_SELECTED | CONTENT_REFINE | AUDIENCE_COLLECTION | VALIDATION_REVIEW | SEND_CONFIRMATION | QUEUED | COMPLETED",
     "Intents: UNKNOWN | NEWSLETTER | SIMPLE_EMAIL | SIGNATURE",
     "",
-    "## Conversation Strategy",
-    "You are a friendly, knowledgeable email marketing assistant. Your job is to INTERACT with the user naturally while guiding them through this flow:",
-    "1. Understand their overall goal (what they want to achieve with email)",
-    "2. Propose a template if they haven't specified one",
-    "3. Help them collect/import their mailing list",
-    "4. Send or schedule the email campaign",
+    "## Intent Comprehension — CRITICAL",
+    "Read the user's message carefully. Identify EXACTLY what they want:",
     "",
-    "## Response Style Rules",
-    "- BE CONVERSATIONAL. Respond naturally to what the user says. Acknowledge their input, ask follow-up questions, offer suggestions.",
-    "- When the user describes their business or goal, engage with it. Ask clarifying questions about their audience, tone, and objectives.",
-    "- Use short paragraphs and numbered lists for readability. Keep responses 2-4 sentences unless detail is needed.",
-    "- NEVER ignore the user's message. Always address what they said before moving to next steps.",
-    "- If the user asks a question about email marketing, answer it helpfully, then guide back to the workflow.",
-    "- If the user's message isn't directly about email, acknowledge it warmly and steer toward how you can help with their email needs.",
-    "- Never use formal letter format, greetings like 'Dear user', or signatures.",
-    "- Never prefix with labels like 'Resumed:' or 'Response:'.",
+    "- 'signature' / 'sign-off' / 'email signature' → compose_signature_email (SIGNATURE)",
+    "- 'write an email' / 'draft' / 'quick email' / 'one-off' → compose_simple_email (SIMPLE_EMAIL)",
+    "- 'analyze' / 'research' / 'metrics' / 'performance' → use the appropriate analysis skill",
+    "- 'budget' / 'cost' / 'roi' / 'pricing' → use the appropriate budget skill",
+    "- 'send' / 'queue' / 'launch' → confirm_queue_campaign (QUEUED)",
+    "- Greeting or unclear → ask_campaign_type — ask what they want (do NOT assume)",
     "",
-    "## Tool Selection Guide",
-    "- PROACTIVE TEMPLATES: As soon as the user mentions ANY email-related intent (welcome email, promo, newsletter, announcement, product update, etc.), use suggest_templates IMMEDIATELY. Do NOT ask clarifying questions first — show templates and refine from there.",
-    "- INTENT_CAPTURE/GOAL_BRIEF: If the user's intent is unclear or not email-related, use ask_campaign_type to learn more.",
-    "- Once templates are shown: User picks a template → use select_template with the templateId.",
-    "- Template confirmed: Use request_recipients to ask for their mailing list.",
-    "- User provides emails: Use validate_recipients to validate them.",
-    "- Ready to send: Use review_campaign, then confirm_queue_campaign.",
-    "- Simple one-off email (no template needed): Use compose_simple_email.",
-    "- Email signature request: Use compose_signature_email.",
+    "## TEMPLATE vs CUSTOM GENERATION — CRITICAL",
+    "Pre-built templates exist ONLY for: Food & Beverage (sushi, burger, vegan, fine dining), SaaS, Real Estate, Fitness, Travel, Healthcare, Education, E-commerce, Wellness.",
+    "- suggest_templates: ONLY if the user's topic clearly matches a domain above (e.g. 'restaurant newsletter', 'fitness promo').",
+    "- generate_hbs_template: For ANY topic NOT in the list (e.g. 'dogs', 'crypto', 'cars', 'pets', 'gaming'). This creates a beautiful custom template.",
+    "- 'newsletter about dogs' → generate_hbs_template (NOT suggest_templates). Dogs is not a pre-built domain.",
+    "- 'restaurant newsletter' → suggest_templates. Food & Beverage has pre-built templates.",
+    "- When in doubt, use generate_hbs_template — custom templates always match the user's topic.",
+    "",
+    "## WORKFLOW PROGRESSION — CRITICAL",
+    "- CONTENT_REFINE state: The user has a generated template. If they say 'yes', 'send', 'ready', 'ok', 'go ahead', 'add recipients' → use request_recipients to collect emails. Do NOT regenerate.",
+    "- AUDIENCE_COLLECTION state: User provides emails → use validate_recipients.",
+    "- VALIDATION_REVIEW state: Emails validated → use review_campaign.",
+    "- SEND_CONFIRMATION state: User confirms → use confirm_queue_campaign.",
+    "",
+    "## Response Style",
+    "- Be direct and conversational. No filler phrases.",
+    "- If the user gives enough info (topic + type), generate immediately with generate_hbs_template.",
+    "- If you need more info, ask ONE specific question, not a list.",
+    "- Never use formal letter format or sign-offs.",
+    "- Reference the user's exact words and situation.",
+    "",
+    "## DO NOT propose or generate too early",
+    "- If the user just greeted you or said something vague, use 'ask_campaign_type'.",
+    "- If the user says 'I want a newsletter' without a topic, ask what topic. ONE question only.",
+    "- If the user says 'I want a newsletter about dogs', that IS enough — use generate_hbs_template immediately.",
+    "- NEVER show suggest_templates for a topic that doesn't match the pre-built domains above.",
     "",
     "## SMTP and Sending Options",
-    "When discussing sending, the user can choose:",
-    "- Platform SMTP (default, included)",
-    "- Their own SMTP server (custom configuration)",
-    "- Purchase dedicated SMTP through the platform",
-    "Mention these options when relevant, especially at the send/schedule step.",
+    "When discussing sending, options are: Platform SMTP (default), custom SMTP, or dedicated SMTP purchase.",
     "",
     `Current workflow state: ${JSON.stringify(context)}`,
+    `Active agent: ${agent.name} (${effectiveAgentId}) — confidence: ${routing.confidence.toFixed(2)}`,
     `User message: ${prompt}`,
   ].join("\n")
 }
@@ -351,21 +366,31 @@ async function persistTelemetry(input: {
 }
 
 async function runPlannerAi(input: GenerateAiTextInput, state: WorkflowMachineState, prompt: string) {
+  const routing = routeToAgent(prompt, state.state)
+  const agent = getAgentProfile(routing.agentId)
+
   const planner = await generateAiText({
     ...input,
-    temperature: 0.3,
-    maxOutputTokens: 400,
-    prompt: buildPlannerPrompt(state, prompt),
+    temperature: Math.min(1, 0.5 + agent.temperatureBias * 0.3),
+    maxOutputTokens: 800,
+    prompt: buildPlannerPrompt(state, prompt, routing.agentId),
     system: [
-      "You are the AI workflow planner for Blastermailer, an email campaign platform.",
+      `You are the "${agent.name}" planner for Blastermailer.`,
+      "",
       "You MUST output valid JSON only. No markdown, no explanation, just the JSON object.",
-      "Your response field should be a warm, helpful, conversational message to the user.",
-      "Always acknowledge what the user said and connect it to the email workflow.",
-      "Be specific and actionable. Reference the user's business, goals, or audience when known.",
+      "",
+      "## CRITICAL RULES for the response field:",
+      "- If the user gave you enough info to act, ACT IMMEDIATELY. Generate the email/signature/template NOW.",
+      "- NEVER ask for info the user already provided. If they said their name and company, use it.",
+      "- If the user confirms ('yes', 'ok', 'sure', 'go ahead', 'lets go'), PROCEED — don't ask more questions.",
+      "- Ask at most ONE question per response. Never list multiple questions.",
+      "- Keep the response to 1-2 sentences. Be concise, not verbose.",
+      "- NEVER use filler like 'Great choice!', 'Absolutely!', 'I can help with that!'",
+      "- Fill in reasonable defaults for any missing details rather than asking.",
     ].join("\n"),
   })
   const parsed = safeJsonParse<PlannerDecision>(planner.text)
-  if (!parsed) return { decision: inferFallbackDecision(state, prompt), planner }
+  if (!parsed) return { decision: inferFallbackDecision(state, prompt), planner, routing }
 
   return {
     decision: {
@@ -377,6 +402,7 @@ async function runPlannerAi(input: GenerateAiTextInput, state: WorkflowMachineSt
       response: parsed.response,
     } as PlannerDecision,
     planner,
+    routing,
   }
 }
 
@@ -452,53 +478,73 @@ export async function* orchestrateAiChatStream(input: OrchestratorInput): AsyncG
 
   let plannerResult: GenerateAiTextResult | null = null
   let decision: PlannerDecision
-  if (incoherentPrompt) {
-    decision = {
-      tool: "ask_campaign_type",
-      state: "GOAL_BRIEF",
-      intent: workflowSession.state.intent === "UNKNOWN" ? "UNKNOWN" : workflowSession.state.intent,
-      response: buildIncoherentPromptResponse(nextIncoherentTurns),
+  try {
+    const plannerOutput = await runPlannerAi(aiInputBase, workflowSession.state, moderation.sanitizedPrompt)
+    plannerResult = plannerOutput.planner
+    decision = plannerOutput.decision
+  } catch (plannerErr) {
+    const plannerErrMsg = plannerErr instanceof Error ? plannerErr.message : String(plannerErr)
+    // Re-throw hard errors (quota, auth, rate limit) — don't silently fall back
+    if (
+      plannerErrMsg.includes("quota") ||
+      plannerErrMsg.includes("limit") ||
+      plannerErrMsg.includes("401") ||
+      plannerErrMsg.includes("403") ||
+      plannerErrMsg.includes("All AI providers failed")
+    ) {
+      throw plannerErr
     }
-  } else if (workflowSession.state.state === "INTENT_CAPTURE" && looksLikeGreetingOrShortIntent(moderation.sanitizedPrompt)) {
+    decision = inferFallbackDecision(workflowSession.state, moderation.sanitizedPrompt)
+  }
+
+  let tool = normalizeTool(decision.tool)
+  let args: Record<string, unknown> = decision.args ?? {}
+
+  // Guardrail: never queue a campaign before recipients are collected.
+  const hasValidRecipients = (workflowSession.state.recipientStats?.valid ?? 0) > 0
+  if (tool === "confirm_queue_campaign" && !hasValidRecipients) {
+    tool = "request_recipients"
+    args = {}
     decision = {
-      tool: "ask_campaign_type",
-      state: "GOAL_BRIEF",
-      intent: workflowSession.state.intent === "UNKNOWN" ? "UNKNOWN" : workflowSession.state.intent,
-      response: [
-        "Hey! I'm your email campaign assistant. I can help you create and send professional emails to your audience.",
-        "",
-        "To get started, tell me:",
-        "1. What's the goal of your email? (promote a product, share news, announce an event, etc.)",
-        "2. Who are you sending to? (customers, subscribers, leads, etc.)",
-        "",
-        "Or just describe what you need and I'll guide you through it.",
-      ].join("\n"),
-    }
-  } else {
-    try {
-      const plannerOutput = await runPlannerAi(aiInputBase, workflowSession.state, moderation.sanitizedPrompt)
-      plannerResult = plannerOutput.planner
-      decision = plannerOutput.decision
-    } catch {
-      decision = inferFallbackDecision(workflowSession.state, moderation.sanitizedPrompt)
+      ...decision,
+      tool: "request_recipients",
+      state: "AUDIENCE_COLLECTION",
+      response: decision.response?.trim() || "Before sending, add recipient emails or upload a CSV.",
     }
   }
 
-  const tool = normalizeTool(decision.tool)
-  const args = decision.args ?? {}
   yield {
     type: "tool_start",
     tool,
     args,
   }
 
-  const toolResult = executeTool({
+  let toolResult = executeTool({
     tool,
     args,
     context: workflowSession.state.context,
     selectedTemplateId: workflowSession.state.selectedTemplateId,
     userPlan: input.userPlan,
   })
+
+  // Fallback: if suggest_templates found no matching templates, switch to generate_hbs_template
+  // so the AI generates a custom template matching the user's request
+  if (tool === "suggest_templates" && (!toolResult.templateSuggestions || toolResult.templateSuggestions.length === 0)) {
+    tool = "generate_hbs_template"
+    args = {
+      templateType: String((decision.args ?? {}).query ?? moderation.sanitizedPrompt),
+      variables: "firstName,companyName,ctaUrl",
+      style: "modern, professional",
+      sections: "hero,body,features,cta,footer",
+    }
+    toolResult = executeTool({
+      tool,
+      args,
+      context: workflowSession.state.context,
+      selectedTemplateId: workflowSession.state.selectedTemplateId,
+      userPlan: input.userPlan,
+    })
+  }
 
   yield {
     type: "tool_result",
@@ -541,97 +587,174 @@ export async function* orchestrateAiChatStream(input: OrchestratorInput): AsyncG
     recipientStats: persisted.state.recipientStats,
   }
 
-  const shouldUseToolTextOnly = [
-    "ask_campaign_type",
-    "suggest_templates",
-    "request_recipients",
-    "validate_recipients",
-    "confirm_queue_campaign",
-  ].includes(tool)
-
   let responseResult: GenerateAiTextResult | null = null
   let finalText = decision.response?.trim() || ""
+  let generatedHtml: string | null = null
+  let generatedSubject: string | null = null
 
-  if (shouldUseToolTextOnly) {
-    if (!finalText) {
-      finalText = toolResult.text ?? "Done."
-    }
-    for (const token of chunkText(finalText)) {
-      yield { type: "token", token }
-    }
-  } else {
+  const isEmailComposition = tool === "compose_signature_email" || tool === "compose_simple_email" || tool === "generate_hbs_template"
+
+  // For generative skills: AI fills content fields only; layout always comes from HBS templates.
+  if (isEmailComposition) {
     try {
-      let streamedText = ""
-      for await (const chunk of generateAiTextStream({
-        ...aiInputBase,
-        system: [
-          "You are Blastermailer AI, a friendly and knowledgeable email campaign assistant.",
-          "You help users create, design, and send email campaigns.",
-          "Be conversational, warm, and specific. Reference the user's actual message.",
-          "Keep responses concise (2-5 sentences) unless the user needs more detail.",
-          "Always guide toward the email workflow: goal → template → recipients → send.",
-          "Never use formal letter format. No 'Dear user' or sign-offs.",
-          "When discussing sending options, mention: platform SMTP (default), custom SMTP, or dedicated SMTP.",
-          "For scheduling, emails can be sent immediately or scheduled for a specific time.",
-          "Emails are sent via a queue system that handles multi-recipient delivery with progress tracking.",
-        ].join("\n"),
-        prompt: [
-          `The user said: "${moderation.sanitizedPrompt}"`,
-          "",
-          `Current workflow state: ${persisted.state.state}`,
-          `User's goal: ${persisted.state.context.goal ?? "not yet defined"}`,
-          `Selected template: ${persisted.state.selectedTemplateId ?? "none"}`,
-          `Recipients: ${persisted.state.recipientStats ? `${persisted.state.recipientStats.valid} valid of ${persisted.state.recipientStats.total} total` : "none yet"}`,
-          "",
-          `Tool used: ${tool}`,
-          `Tool output: ${JSON.stringify(toolResult)}`,
-          "",
-          "Write a natural, helpful response that:",
-          "1. Directly addresses what the user said",
-          "2. Incorporates the tool result naturally",
-          "3. Suggests the clear next step in the workflow",
-        ].join("\n"),
-      })) {
-        if (chunk.type === "token") {
-          streamedText += chunk.token
-          yield { type: "token", token: chunk.token }
-          continue
-        }
-        responseResult = {
-          text: chunk.text,
-          model: chunk.model,
-          provider: chunk.provider,
-          attempts: chunk.attempts,
-          tokenIn: null,
-          tokenOut: null,
-          latencyMs: null,
-          estimatedCostUsd: null,
-        }
-      }
+      const topicParts = [
+        persisted.state.context.goal,
+        args.templateType ? String(args.templateType) : null,
+        args.topic ? String(args.topic) : null,
+        args.purpose ? String(args.purpose) : null,
+        moderation.sanitizedPrompt,
+      ].filter(Boolean)
+      const topicDescription = topicParts.join(" — ")
+      const defaultTemplateId =
+        persisted.state.selectedTemplateId ??
+        (tool === "compose_signature_email"
+          ? "compose-signature-email"
+          : tool === "compose_simple_email"
+            ? "compose-simple-email"
+            : resolveTemplateIdFromPrompt(topicDescription || moderation.sanitizedPrompt))
 
-      if (streamedText.trim()) {
-        finalText = streamedText.trim()
-      } else if (responseResult?.text) {
-        finalText = responseResult.text
-      }
-    } catch {
-      responseResult = await generateAiText({
+      const contentResult = await generateAiText({
         ...aiInputBase,
+        temperature: 0.6,
+        maxOutputTokens: 1400,
         system: [
-          "You are Blastermailer AI, a friendly email campaign assistant.",
-          "Be conversational, concise, and helpful. Reference what the user actually said.",
-          "Guide toward: goal → template → recipients → send.",
-          "No formal letter format. No sign-offs.",
+          "You are an email campaign copywriter.",
+          "You MUST NOT generate HTML.",
+          "You MUST return ONLY valid JSON with plain text content fields.",
+          "Required JSON keys: subject, title, subtitle, content, cta, image, footer.",
+          "Optional keys: preheader, templateName, accentColor, backgroundColor, buttonColor, buttonTextColor.",
+          "Do not include markdown, explanations, comments, or code fences.",
         ].join("\n"),
         prompt: [
-          `The user said: "${moderation.sanitizedPrompt}"`,
-          `Workflow state: ${persisted.state.state}`,
-          `Tool: ${tool}`,
-          `Tool result: ${JSON.stringify(toolResult)}`,
-          "Write a concise, natural response addressing the user and suggesting next steps.",
+          `User request: "${moderation.sanitizedPrompt}"`,
+          `Email type: ${tool}`,
+          `Topic/goal: ${topicDescription}`,
+          `Base template id: ${defaultTemplateId}`,
+          "",
+          "Generate concise but rich content that fits an email newsletter structure.",
+          "For content, include 2-3 short paragraphs separated by blank lines.",
+          "Use a specific CTA phrase, not generic text.",
+          "If user requested colors, include them in optional color fields.",
+          "Output ONLY the JSON object.",
         ].join("\n"),
       })
+
+      const parsed = safeJsonParse<Partial<TemplateRenderVariables>>(contentResult.text)
+      const variables = normalizeTemplateVariables(defaultTemplateId, parsed ?? {})
+      const rendered = renderEmailTemplateFromHbs(defaultTemplateId, variables)
+      generatedHtml = rendered.html
+      generatedSubject = variables.subject
+    } catch {
+      // Template rendering failed — continue with text-only response.
+    }
+  }
+
+  // Stream the conversational response using the active agent's persona
+  try {
+    let streamedText = ""
+    const plannerHint = decision.response?.trim() || ""
+    const isTemplateFlow = tool === "suggest_templates" || tool === "select_template"
+    const isSignatureOrSimple = persisted.state.intent === "SIGNATURE" || persisted.state.intent === "SIMPLE_EMAIL"
+
+    // Resolve the active agent for the response persona
+    const responseRouting = routeToAgent(moderation.sanitizedPrompt, persisted.state.state)
+    const responseAgent = getAgentProfile(responseRouting.agentId)
+
+    for await (const chunk of generateAiTextStream({
+      ...aiInputBase,
+      system: [
+        `You are the "${responseAgent.name}" for Blastermailer — ${responseAgent.shortDescription}.`,
+        "",
+        "## CRITICAL: Do NOT be repetitive or overly persistent",
+        "- If the user already gave you information (name, company, colors, style, etc.), USE IT IMMEDIATELY. Do NOT ask for it again.",
+        "- If the user says 'yes', 'ok', 'sure', 'go ahead', or confirms — PROCEED with the action, don't ask more questions.",
+        "- NEVER ask more than ONE question per response. If you need multiple pieces of info, pick the most important one.",
+        "- If the user gave you enough info to act (even partially), ACT NOW and fill in reasonable defaults for anything missing.",
+        "- When an email/signature/template has been generated, briefly describe it, then ask: 'Want any changes, or ready to add recipients and send?'",
+        "",
+        "## Response Rules",
+        "- ALWAYS address what the user actually said. React to their specific words.",
+        "- NEVER use formal letter format or sign-offs like 'Best regards'",
+        "- NEVER start with 'Great choice!', 'Absolutely!', 'I can help with that!', or similar filler",
+        "- Keep responses to 1-2 short paragraphs MAX. Be concise.",
+        "- Do NOT repeat information the user already knows.",
+        "- Do NOT list multiple options unless the user asked for options.",
+        isSignatureOrSimple
+          ? "- The user wants a signature or simple email — focus on that, not campaign templates"
+          : "",
+        tool === "generate_hbs_template" && generatedHtml
+          ? "- A newsletter template has been generated and shown to the user. Briefly describe what it contains. Then ask: 'Want any changes, or shall we add your recipients and send it?'"
+          : "",
+        tool === "generate_hbs_template" && !generatedHtml
+          ? "- Template generation failed. Ask ONE question about what they need. Don't list all possible options."
+          : "",
+        isEmailComposition && tool !== "generate_hbs_template" && generatedHtml
+          ? "- An email has been generated and is shown to the user. Briefly describe it. Then ask: 'Want any changes, or ready to add recipients and send?'"
+          : "",
+        isEmailComposition && tool !== "generate_hbs_template" && !generatedHtml
+          ? "- Ask ONE specific question to get the most critical missing detail. Don't ask for everything at once."
+          : "",
+      ].filter(Boolean).join("\n"),
+      prompt: [
+        `User said: "${moderation.sanitizedPrompt}"`,
+        "",
+        `Context:`,
+        `- Active agent: ${responseAgent.name}`,
+        `- Intent: ${persisted.state.intent}`,
+        `- Workflow state: ${persisted.state.state}`,
+        `- Goal: ${persisted.state.context.goal ?? "not yet defined"}`,
+        isTemplateFlow && toolResult.templateSuggestions?.length
+          ? `- Templates shown: ${toolResult.templateSuggestions.map((t) => t.name).join(", ")}`
+          : "",
+        isEmailComposition && generatedHtml
+          ? `- Generated ${tool === "generate_hbs_template" ? "HBS template" : "email"} subject: "${generatedSubject ?? "(see preview)"}"`
+          : "",
+        isEmailComposition && !generatedHtml
+          ? `- ${tool === "generate_hbs_template" ? "HBS template" : "Email"} generation needs more info from user`
+          : "",
+        plannerHint ? `- Planner note: ${plannerHint}` : "",
+        "",
+        "Write a natural, concise response. Be specific to what the user asked.",
+      ].filter(Boolean).join("\n"),
+    })) {
+      if (chunk.type === "token") {
+        streamedText += chunk.token
+        yield { type: "token", token: chunk.token }
+        continue
+      }
+      responseResult = {
+        text: chunk.text,
+        model: chunk.model,
+        provider: chunk.provider,
+        attempts: chunk.attempts,
+        tokenIn: null,
+        tokenOut: null,
+        latencyMs: null,
+        estimatedCostUsd: null,
+      }
+    }
+
+    if (streamedText.trim()) {
+      finalText = streamedText.trim()
+    } else if (responseResult?.text) {
       finalText = responseResult.text
+    }
+  } catch (responseErr) {
+    const responseErrMsg = responseErr instanceof Error ? responseErr.message : String(responseErr)
+    // Re-throw hard errors so the stream route sends a proper error event
+    if (
+      responseErrMsg.includes("quota") ||
+      responseErrMsg.includes("limit") ||
+      responseErrMsg.includes("401") ||
+      responseErrMsg.includes("403") ||
+      responseErrMsg.includes("All AI providers failed") ||
+      responseErrMsg.includes("caps are configured") ||
+      responseErrMsg.includes("No AI provider")
+    ) {
+      throw responseErr
+    }
+    if (!finalText) finalText = decision.response?.trim() || ""
+    if (finalText) {
       for (const token of chunkText(finalText)) {
         yield { type: "token", token }
       }
@@ -639,7 +762,7 @@ export async function* orchestrateAiChatStream(input: OrchestratorInput): AsyncG
   }
 
   if (!finalText) {
-    finalText = toolResult.text ?? "Done."
+    finalText = decision.response?.trim() || "How can I help you today?"
   }
 
   await persistTelemetry({
@@ -691,6 +814,8 @@ export async function* orchestrateAiChatStream(input: OrchestratorInput): AsyncG
     templateSuggestions: toolResult.templateSuggestions,
     recipientStats: persisted.state.recipientStats,
     campaignId: toolResult.campaignId ?? null,
+    generatedHtml: generatedHtml ?? null,
+    generatedSubject: generatedSubject ?? null,
     remainingCredits: creditCharge.snapshot.remainingCredits,
     maxCredits: creditCharge.snapshot.maxCredits,
     estimatedCostEur,

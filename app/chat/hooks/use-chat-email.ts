@@ -23,11 +23,11 @@ export function useChatEmail(
     const stats = computeValidationStats(mergedEntries)
     setMessages((prev) => [
       ...prev,
-      { id: Date.now(), role: "user", text: `${prefix} (total ${mergedEntries.length})` },
+      { id: crypto.randomUUID(), role: "user", text: `${prefix} (total ${mergedEntries.length})` },
       {
-        id: Date.now() + 1,
+        id: crypto.randomUUID(),
         role: "bot",
-        text: `Validation complete: ${stats.valid} valid, ${stats.invalid} invalid, ${stats.duplicates} duplicates.`,
+        text: `Upload recap: ${stats.total} total · ${stats.valid} valid · ${stats.invalid} invalid · ${stats.duplicates} duplicates.`,
         kind: "validation",
         validationStats: stats,
       },
@@ -35,19 +35,20 @@ export function useChatEmail(
   }
 
   const processCsvFile = async (file: File | null, csvFileInputRef: React.RefObject<HTMLInputElement | null>) => {
-    if (!file || composerMode !== "emails") return
+    if (!file) return
     setIsCsvProcessing(true)
     try {
       const csvText = await file.text()
       await new Promise((resolve) => window.setTimeout(resolve, 650))
       const parsed = parseEmailEntriesFromCsvText(csvText)
       if (!parsed.ok) {
-        setMessages((prev) => [...prev, { id: Date.now(), role: "bot", text: `CSV error: ${parsed.error}` }])
+        setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "bot", text: `CSV error: ${parsed.error}` }])
         return
       }
-      appendEmailEntries(parsed.entries, `CSV ${file.name} imported ${parsed.entries.length} recipients`)
+      const fileLabel = file.name.length > 36 ? `${file.name.slice(0, 35)}…` : file.name
+      appendEmailEntries(parsed.entries, `CSV ${fileLabel} imported ${parsed.entries.length} recipients`)
     } catch {
-      setMessages((prev) => [...prev, { id: Date.now(), role: "bot", text: "Could not read CSV file. Please upload a valid .csv file." }])
+      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "bot", text: "Could not read CSV file. Please upload a valid .csv file." }])
     } finally {
       setIsCsvProcessing(false)
       if (csvFileInputRef.current) csvFileInputRef.current.value = ""
@@ -60,7 +61,7 @@ export function useChatEmail(
   ) => {
     const parsed = parseEmailEntries(value)
     if (!parsed.length) {
-      setMessages((prev) => [...prev, { id: Date.now() + 1, role: "bot", text: "No email addresses detected. Paste plain emails or a CSV containing an email column." }])
+      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "bot", text: "No email addresses detected. Paste plain emails or a CSV containing an email column." }])
       setPrompt("")
       return true
     }
@@ -81,7 +82,7 @@ export function useChatEmail(
     setComposerMode("emails")
     setMessages((prev) => {
       if (prev.some((item) => item.kind === "emailRequest")) return prev
-      return [...prev, { id: Date.now(), role: "bot", text: chatCopy.emailRequestIntro, kind: "emailRequest" }]
+      return [...prev, { id: crypto.randomUUID(), role: "bot", text: chatCopy.emailRequestIntro, kind: "emailRequest" }]
     })
   }
 

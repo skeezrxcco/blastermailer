@@ -110,48 +110,110 @@ export function TemplateEditorModal({
     chatScrollRef.current.scrollTo({ top: chatScrollRef.current.scrollHeight, behavior: "smooth" })
   }, [chatMessages])
 
-  const applyPrompt = (prompt: string) => {
-    const value = prompt.toLowerCase()
-    const updates: Array<[keyof TemplateEditorData, string]> = []
-    const themePatch: Partial<EditorThemeState> = {}
+  const [isEditorAiLoading, setIsEditorAiLoading] = useState(false)
 
-    if (value.includes("short") && value.includes("headline")) {
-      updates.push(["headline", "New Seasonal Menu Is Live"])
-    }
-    if (value.includes("premium") || value.includes("luxury") || value.includes("elegant")) {
-      updates.push(["subheadline", "A refined seasonal experience crafted for guests who value precision, quality, and chef-led storytelling."])
-      themePatch.accentA = "#111827"
-      themePatch.accentB = "#9a3412"
-    }
-    if (value.includes("green") || value.includes("vegan")) {
-      themePatch.accentA = "#14532d"
-      themePatch.accentB = "#22c55e"
-      themePatch.surface = "#f0fdf4"
-    }
-    if (value.includes("cta")) {
-      updates.push(["ctaText", "Book Your Table"])
-    }
-
-    updates.forEach(([field, next]) => onDataChange(field, next))
-    if (Object.keys(themePatch).length) onThemeChange(themePatch)
-
-    if (!updates.length && !Object.keys(themePatch).length) {
-      return "Applied minor copy polish and spacing adjustments."
-    }
-
-    return "Updated. Review the preview and continue refining if needed."
-  }
-
-  const sendEditorPrompt = () => {
+  const sendEditorPrompt = async () => {
     const prompt = chatInput.trim()
-    if (!prompt) return
+    if (!prompt || isEditorAiLoading) return
 
-    const userMessage: EditorChatMessage = { id: Date.now(), role: "user", text: prompt }
-    const assistantReply = applyPrompt(prompt)
-    const assistantMessage: EditorChatMessage = { id: Date.now() + 1, role: "assistant", text: assistantReply }
-
-    setChatMessages((prev) => [...prev, userMessage, assistantMessage])
+    const userMessage: EditorChatMessage = { id: Date.now() + Math.random(), role: "user", text: prompt }
+    setChatMessages((prev) => [...prev, userMessage])
     setChatInput("")
+    setIsEditorAiLoading(true)
+
+    try {
+      const currentState = {
+        templateName: template.name,
+        headline: data.headline,
+        subheadline: data.subheadline,
+        ctaText: data.ctaText,
+        subjectLine: data.subjectLine,
+        preheader: data.preheader,
+        offerTitle: data.offerTitle,
+        offerDescription: data.offerDescription,
+        dishOneTitle: data.dishOneTitle,
+        dishOneDescription: data.dishOneDescription,
+        dishTwoTitle: data.dishTwoTitle,
+        dishTwoDescription: data.dishTwoDescription,
+        footerNote: data.footerNote,
+        accentA: theme.accentA,
+        accentB: theme.accentB,
+        surface: theme.surface,
+        ctaBg: theme.ctaBg,
+        ctaText_color: theme.ctaText,
+      }
+
+      const response = await fetch("/api/ai/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: [
+            "You are an expert email template editor. The user wants to modify their email template.",
+            "",
+            `User's instruction: "${prompt}"`,
+            "",
+            `Current template state: ${JSON.stringify(currentState)}`,
+            "",
+            "Respond with a JSON object containing two fields:",
+            '1. "changes" - an object with field names as keys and new values. Only include fields that should change.',
+            "   Content fields: headline, subheadline, ctaText, subjectLine, preheader, offerTitle, offerDescription, dishOneTitle, dishOneDescription, dishTwoTitle, dishTwoDescription, footerNote",
+            "   Color fields: accentA, accentB, surface, ctaBg, ctaText_color (use hex codes)",
+            '2. "explanation" - a brief, friendly explanation of what you changed and why (1-2 sentences)',
+            "",
+            "Example response:",
+            '{"changes":{"headline":"Summer Sale Is Here","accentA":"#dc2626"},"explanation":"Made the headline more urgent and switched to a bold red accent to create excitement."}',
+            "",
+            "IMPORTANT: Output ONLY the JSON object. No markdown, no code fences, no extra text.",
+          ].join("\n"),
+          qualityMode: "fast",
+        }),
+      })
+
+      if (!response.ok) throw new Error("AI request failed")
+
+      const payload = (await response.json()) as { text?: string }
+      const aiText = (payload.text ?? "").trim()
+
+      // Parse the AI response for structured changes
+      let parsed: { changes?: Record<string, string>; explanation?: string } | null = null
+      try {
+        const jsonStart = aiText.indexOf("{")
+        const jsonEnd = aiText.lastIndexOf("}")
+        if (jsonStart >= 0 && jsonEnd > jsonStart) {
+          parsed = JSON.parse(aiText.slice(jsonStart, jsonEnd + 1))
+        }
+      } catch { parsed = null }
+
+      if (parsed?.changes && typeof parsed.changes === "object") {
+        const contentFields = new Set(["headline", "subheadline", "ctaText", "subjectLine", "preheader", "heroImage", "offerTitle", "offerDescription", "dishOneTitle", "dishOneDescription", "dishTwoTitle", "dishTwoDescription", "footerNote", "restaurantName"])
+        const themeFields: Record<string, keyof EditorThemeState> = {
+          accentA: "accentA", accentB: "accentB", surface: "surface",
+          ctaBg: "ctaBg", ctaText_color: "ctaText",
+        }
+        const themePatch: Partial<EditorThemeState> = {}
+
+        for (const [key, value] of Object.entries(parsed.changes)) {
+          if (typeof value !== "string" || !value.trim()) continue
+          if (contentFields.has(key)) {
+            onDataChange(key as keyof TemplateEditorData, value)
+          } else if (themeFields[key]) {
+            themePatch[themeFields[key]] = value
+          }
+        }
+        if (Object.keys(themePatch).length) onThemeChange(themePatch)
+
+        const explanation = parsed.explanation?.trim() || "Changes applied. Check the preview!"
+        setChatMessages((prev) => [...prev, { id: Date.now() + Math.random(), role: "assistant", text: explanation }])
+      } else {
+        // If AI didn't return structured JSON, show its text response
+        const fallbackText = parsed?.explanation || aiText.slice(0, 300) || "I couldn't apply changes from that instruction. Try being more specific, like: 'make the headline shorter' or 'use blue and white colors'."
+        setChatMessages((prev) => [...prev, { id: Date.now() + Math.random(), role: "assistant", text: fallbackText }])
+      }
+    } catch {
+      setChatMessages((prev) => [...prev, { id: Date.now() + Math.random(), role: "assistant", text: "Something went wrong. Try rephrasing your request — for example: 'make the headline bolder' or 'change colors to dark blue and gold'." }])
+    } finally {
+      setIsEditorAiLoading(false)
+    }
   }
 
   const getImageByTarget = (target: ImageEditTarget) => {
@@ -248,6 +310,14 @@ export function TemplateEditorModal({
                   {message.text}
                 </div>
               ))}
+              {isEditorAiLoading ? (
+                <div className="flex items-center gap-1.5 rounded-2xl bg-zinc-900 px-3 py-2 text-xs text-zinc-400">
+                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-sky-400" />
+                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-sky-400" style={{ animationDelay: "150ms" }} />
+                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-sky-400" style={{ animationDelay: "300ms" }} />
+                  <span className="ml-1">Thinking...</span>
+                </div>
+              ) : null}
             </div>
             <div className="mt-2 flex items-center gap-2 rounded-2xl bg-zinc-950/75 p-2">
               <input
@@ -259,8 +329,9 @@ export function TemplateEditorModal({
                     sendEditorPrompt()
                   }
                 }}
-                placeholder="Tell AI what to change..."
-                className="h-10 w-full rounded-xl bg-zinc-900/80 px-3 text-xs text-zinc-100 outline-none focus:ring-2 focus:ring-sky-500/45"
+                disabled={isEditorAiLoading}
+                placeholder={isEditorAiLoading ? "AI is updating..." : "Tell AI what to change..."}
+                className="h-10 w-full rounded-xl bg-zinc-900/80 px-3 text-xs text-zinc-100 outline-none focus:ring-2 focus:ring-sky-500/45 disabled:opacity-50"
               />
             </div>
           </div>

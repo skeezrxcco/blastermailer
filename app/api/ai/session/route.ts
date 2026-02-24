@@ -11,6 +11,17 @@ import {
 } from "@/lib/ai/workflow-store"
 import { deleteMessagesByConversation } from "@/lib/messaging"
 
+const DEFAULT_SESSIONS_LIMIT = 10
+const MAX_SESSIONS_LIMIT = 50
+
+function parseQueryInteger(input: string | null, fallback: number, range?: { min?: number; max?: number }) {
+  const parsed = Number.parseInt(String(input ?? ""), 10)
+  if (!Number.isFinite(parsed)) return fallback
+  const min = range?.min ?? Number.NEGATIVE_INFINITY
+  const max = range?.max ?? Number.POSITIVE_INFINITY
+  return Math.min(Math.max(parsed, min), max)
+}
+
 function mapSessionPayload(session: {
   conversationId: string
   state: { state: string; intent: string; selectedTemplateId: string | null; recipientStats: unknown; summary: string | null; context: unknown }
@@ -36,18 +47,32 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url)
   const conversationId = url.searchParams.get("conversationId")
+  const sessionsLimit = parseQueryInteger(url.searchParams.get("sessionsLimit"), DEFAULT_SESSIONS_LIMIT, { min: 1, max: MAX_SESSIONS_LIMIT })
+  const sessionsOffset = parseQueryInteger(url.searchParams.get("sessionsOffset"), 0, { min: 0 })
 
-  const [selected, sessions] = await Promise.all([
-    conversationId
-      ? getWorkflowSessionByConversationId({ userId: session.user.id, conversationId })
-      : getLatestWorkflowSession(session.user.id),
-    listWorkflowSessions({ userId: session.user.id }),
-  ])
+  const pagedSessions = await listWorkflowSessions({
+    userId: session.user.id,
+    limit: sessionsLimit + 1,
+    offset: sessionsOffset,
+  })
+  const hasMore = pagedSessions.length > sessionsLimit
+  const sessions = hasMore ? pagedSessions.slice(0, sessionsLimit) : pagedSessions
+  const sessionsMeta = {
+    limit: sessionsLimit,
+    offset: sessionsOffset,
+    nextOffset: sessionsOffset + sessions.length,
+    hasMore,
+  }
+
+  const selected = conversationId
+    ? await getWorkflowSessionByConversationId({ userId: session.user.id, conversationId })
+    : await getLatestWorkflowSession(session.user.id)
 
   if (!selected) {
     return NextResponse.json({
       session: null,
       sessions,
+      sessionsMeta,
       checkpoint: null,
     })
   }
@@ -55,6 +80,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     session: mapSessionPayload(selected.session),
     sessions,
+    sessionsMeta,
     checkpoint: selected.lastCheckpoint
       ? {
           state: selected.lastCheckpoint.state,
@@ -73,6 +99,8 @@ export async function DELETE(request: Request) {
 
   const url = new URL(request.url)
   const conversationId = url.searchParams.get("conversationId")
+  const sessionsLimit = parseQueryInteger(url.searchParams.get("sessionsLimit"), DEFAULT_SESSIONS_LIMIT, { min: 1, max: MAX_SESSIONS_LIMIT })
+  const sessionsOffset = parseQueryInteger(url.searchParams.get("sessionsOffset"), 0, { min: 0 })
   if (!conversationId) {
     return NextResponse.json({ error: "conversationId is required" }, { status: 422 })
   }
@@ -82,9 +110,21 @@ export async function DELETE(request: Request) {
     deleteMessagesByConversation({ userId: session.user.id, conversationId }),
   ])
 
-  const sessions = await listWorkflowSessions({ userId: session.user.id })
+  const pagedSessions = await listWorkflowSessions({
+    userId: session.user.id,
+    limit: sessionsLimit + 1,
+    offset: sessionsOffset,
+  })
+  const hasMore = pagedSessions.length > sessionsLimit
+  const sessions = hasMore ? pagedSessions.slice(0, sessionsLimit) : pagedSessions
+  const sessionsMeta = {
+    limit: sessionsLimit,
+    offset: sessionsOffset,
+    nextOffset: sessionsOffset + sessions.length,
+    hasMore,
+  }
 
-  return NextResponse.json({ deleted: archived, sessions })
+  return NextResponse.json({ deleted: archived, sessions, sessionsMeta })
 }
 
 export async function POST(request: Request) {
@@ -106,10 +146,24 @@ export async function POST(request: Request) {
     conversationId,
   })
 
-  const sessions = await listWorkflowSessions({ userId: session.user.id })
+  const sessionsLimit = DEFAULT_SESSIONS_LIMIT
+  const pagedSessions = await listWorkflowSessions({
+    userId: session.user.id,
+    limit: sessionsLimit + 1,
+    offset: 0,
+  })
+  const hasMore = pagedSessions.length > sessionsLimit
+  const sessions = hasMore ? pagedSessions.slice(0, sessionsLimit) : pagedSessions
+  const sessionsMeta = {
+    limit: sessionsLimit,
+    offset: 0,
+    nextOffset: sessions.length,
+    hasMore,
+  }
 
   return NextResponse.json({
     session: mapSessionPayload(created),
     sessions,
+    sessionsMeta,
   })
 }

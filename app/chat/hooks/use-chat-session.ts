@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
 
 import { buildEditorData, templateOptions, type TemplateEditorData, type TemplateOption } from "@/components/shared/newsletter/template-data"
 import { confirmedTemplateNotice, initialChatMessages, selectedTemplateNotice } from "@/app/chat/chat-page.data"
@@ -20,8 +20,7 @@ function createThemeState(template: TemplateOption): EditorThemeState {
   }
 }
 
-export function useChatSession(isAiResponding: boolean) {
-  const router = useRouter()
+export function useChatSession() {
   const searchParams = useSearchParams()
   const initializedFromTemplateRef = useRef(false)
 
@@ -47,7 +46,7 @@ export function useChatSession(isAiResponding: boolean) {
     if (announce) {
       setMessages((prev) => {
         const withoutOldReviews = prev.filter((m) => m.kind !== "templateReview")
-        return [...withoutOldReviews, { id: Date.now(), role: "bot", text: confirmedTemplateNotice(template.name), kind: "templateReview" }]
+        return [...withoutOldReviews, { id: crypto.randomUUID(), role: "bot", text: confirmedTemplateNotice(template.name), kind: "templateReview" }]
       })
     }
   }
@@ -83,8 +82,8 @@ export function useChatSession(isAiResponding: boolean) {
       const summary = session.summary?.trim()
       setMessages(
         summary
-          ? [{ id: Date.now(), role: "bot", text: summary }]
-          : [{ id: Date.now(), role: "bot", text: "Conversation loaded. Tell me what you want to do next." }],
+          ? [{ id: crypto.randomUUID(), role: "bot", text: summary }]
+          : [{ id: crypto.randomUUID(), role: "bot", text: "Conversation loaded. Tell me what you want to do next." }],
       )
     }
   }
@@ -97,25 +96,6 @@ export function useChatSession(isAiResponding: boolean) {
     return payload.session ?? null
   }
 
-  const startNewConversation = async () => {
-    if (isAiResponding) return
-    const newConversationId =
-      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `conv-${Date.now().toString(36)}`
-
-    const response = await fetch("/api/ai/session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ conversationId: newConversationId }),
-    })
-    if (!response.ok) return
-    const payload = (await response.json()) as { session?: ChatSessionSummary | null }
-    clearConversationWorkspace()
-    if (payload.session) { await applySessionToUi(payload.session) } else { setConversationId(newConversationId) }
-    router.replace("/chat")
-  }
-
   useEffect(() => {
     if (initializedFromTemplateRef.current) return
     if (!templateParam) return
@@ -123,34 +103,62 @@ export function useChatSession(isAiResponding: boolean) {
     if (!template) return
     initializedFromTemplateRef.current = true
     applyTemplateSelection(template, false)
-    setMessages((prev) => [...prev, { id: Date.now(), role: "bot", text: selectedTemplateNotice(template.name), kind: "templateReview" }])
+    setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "bot", text: selectedTemplateNotice(template.name), kind: "templateReview" }])
   }, [templateParam])
 
   useEffect(() => {
-    if (!conversationId) return
-    try { window.sessionStorage.setItem("bm_ai_conversation_id", conversationId) } catch { /* Ignore */ }
-  }, [conversationId])
+    if (newChatParam !== "1") return
+    setMessages([])
+    setSelectedTemplate(null)
+    setTemplateData(null)
+    setThemeState(null)
+    setDishOrder(["one", "two"])
+    setComposerMode("prompt")
+    setWorkflowState("INTENT_CAPTURE")
+    setConversationId(null)
+  }, [newChatParam])
 
   useEffect(() => {
     let cancelled = false
     const hydrateSession = async () => {
       try {
-        const fromStorage = window.sessionStorage.getItem("bm_ai_conversation_id")
-        const preferredConversationId = conversationIdParam || fromStorage || null
-        if (newChatParam === "1") { await startNewConversation(); return }
-        let session: ChatSessionSummary | null = null
-        if (!templateParam) {
-          session = await loadSessionSnapshot(preferredConversationId)
-          if (!session && preferredConversationId) session = await loadSessionSnapshot(null)
-        } else {
-          await loadSessionSnapshot(preferredConversationId)
+        if (newChatParam === "1") return
+        if (conversationIdParam && conversationId === conversationIdParam && messages.length > 0) return
+        if (!conversationIdParam) {
+          if (!templateParam) {
+            setMessages([])
+            setSelectedTemplate(null)
+            setTemplateData(null)
+            setThemeState(null)
+            setDishOrder(["one", "two"])
+            setComposerMode("prompt")
+            setWorkflowState("INTENT_CAPTURE")
+            setConversationId(null)
+          }
+          return
         }
-        if (session && !cancelled) await applySessionToUi(session, { injectSummaryMessage: !!conversationIdParam })
+
+        const session = await loadSessionSnapshot(conversationIdParam)
+        if (session && !cancelled) {
+          await applySessionToUi(session, { injectSummaryMessage: true })
+          return
+        }
+
+        if (!cancelled) {
+          setMessages([])
+          setSelectedTemplate(null)
+          setTemplateData(null)
+          setThemeState(null)
+          setDishOrder(["one", "two"])
+          setComposerMode("prompt")
+          setWorkflowState("INTENT_CAPTURE")
+          setConversationId(null)
+        }
       } catch { /* Ignore */ }
     }
     void hydrateSession()
     return () => { cancelled = true }
-  }, [conversationIdParam, newChatParam, templateParam])
+  }, [conversationId, conversationIdParam, messages.length, newChatParam, templateParam])
 
   return {
     messages, setMessages,

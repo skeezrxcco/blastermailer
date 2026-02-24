@@ -248,9 +248,10 @@ export async function archiveWorkflowSession(input: { userId: string; conversati
   return result.count > 0
 }
 
-export async function listWorkflowSessions(input: { userId: string; limit?: number }): Promise<WorkflowSessionListItem[]> {
+export async function listWorkflowSessions(input: { userId: string; limit?: number; offset?: number }): Promise<WorkflowSessionListItem[]> {
   const now = new Date()
   const limit = Math.min(Math.max(input.limit ?? 25, 1), 100)
+  const offset = Math.max(input.offset ?? 0, 0)
   const sessions = await prisma.aiWorkflowSession.findMany({
     where: {
       userId: input.userId,
@@ -258,6 +259,7 @@ export async function listWorkflowSessions(input: { userId: string; limit?: numb
       expiresAt: { gt: now },
     },
     orderBy: { lastActivityAt: "desc" },
+    skip: offset,
     take: limit,
   })
 

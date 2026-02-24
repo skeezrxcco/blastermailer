@@ -13,9 +13,7 @@ export type MessageListProps = {
   selectedTemplate: TemplateOption | null
   templateData: TemplateEditorData | null
   isPaidPlan: boolean
-  onPreviewTemplate: (t: TemplateOption) => void
   onSelectTemplate: (t: TemplateOption) => void
-  onEditTemplate: () => void
   onChangeTemplate: () => void
   onContinueToEmails: () => void
   onEditEmailEntry: (id: string, value: string) => void
@@ -25,7 +23,7 @@ export type MessageListProps = {
 
 export function MessageList({
   messages, emailEntries, selectedTemplate, templateData, isPaidPlan,
-  onPreviewTemplate, onSelectTemplate, onEditTemplate, onChangeTemplate,
+  onSelectTemplate, onChangeTemplate,
   onContinueToEmails, onEditEmailEntry, onRemoveEmailEntry, onConfirmSend,
 }: MessageListProps) {
   return (
@@ -41,13 +39,27 @@ export function MessageList({
         >
           <div
             className={cn(
-              "max-w-[96%] rounded-2xl px-3.5 py-3 text-sm",
-              message.role === "bot" ? "bg-zinc-900/80 text-zinc-100" : "bg-sky-500/20 text-sky-100",
+              "max-w-[88%] text-[15px] leading-relaxed",
+              message.role === "bot"
+                ? "text-zinc-200"
+                : "rounded-2xl bg-zinc-800/60 px-4 py-2.5 text-zinc-100",
             )}
           >
+            {message.attachments?.some((a) => a.type === "image") ? (
+              <div className="mb-2 flex flex-wrap gap-2">
+                {message.attachments.filter((a) => a.type === "image" && a.previewUrl).map((a) => (
+                  <img
+                    key={a.id}
+                    src={a.previewUrl}
+                    alt={a.name}
+                    className="h-20 w-20 rounded-lg object-cover ring-1 ring-zinc-700/50"
+                  />
+                ))}
+              </div>
+            ) : null}
             {message.role === "bot"
               ? <AnimatedBotText text={message.text} />
-              : <p className="leading-relaxed">{message.text}</p>}
+              : <p>{message.text}</p>}
 
             {message.kind === "suggestions" ? (
               <div className="mt-3">
@@ -64,7 +76,6 @@ export function MessageList({
                         key={template.id}
                         template={template}
                         selected={selectedTemplate?.id === template.id}
-                        onPreview={() => onPreviewTemplate(template)}
                         onSelect={() => onSelectTemplate(template)}
                       />
                     ))}
@@ -77,7 +88,6 @@ export function MessageList({
                 <SelectedTemplateReviewCard
                   template={selectedTemplate}
                   data={templateData}
-                  onEdit={onEditTemplate}
                   onChange={onChangeTemplate}
                   onContinue={onContinueToEmails}
                 />

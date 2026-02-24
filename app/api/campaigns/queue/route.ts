@@ -4,6 +4,11 @@ import { NextResponse } from "next/server"
 import { authOptions } from "@/lib/auth"
 import { enqueueEmailJob, type SmtpConfig, type SmtpSource } from "@/lib/email-queue"
 import { checkEmailQuota, consumeEmailQuota } from "@/lib/email-quota"
+import {
+  normalizeTemplateVariables,
+  renderEmailTemplateFromHbs,
+  type TemplateRenderVariables,
+} from "@/lib/email-template-hbs"
 
 function normalizeSmtpSource(value?: string): SmtpSource {
   const normalized = String(value ?? "platform").trim().toLowerCase()
@@ -22,6 +27,8 @@ export async function POST(request: Request) {
     campaignId?: string
     subject?: string
     html?: string
+    templateId?: string
+    templateVariables?: Partial<TemplateRenderVariables>
     text?: string
     from?: string
     recipientEmails?: string[]
@@ -34,9 +41,21 @@ export async function POST(request: Request) {
   }
 
   const campaignId = String(body.campaignId ?? `cmp-${Date.now().toString(36)}`).trim()
-  const subject = String(body.subject ?? "").trim()
+  const templateId = String(body.templateId ?? "").trim()
+  const normalizedTemplateVariables = templateId
+    ? normalizeTemplateVariables(templateId, body.templateVariables ?? {})
+    : null
+  const renderedFromTemplate = templateId
+    ? renderEmailTemplateFromHbs(templateId, normalizedTemplateVariables!)
+    : null
+  const resolvedHtml = String(body.html ?? "").trim() || renderedFromTemplate?.html || ""
+  const subject = String(body.subject ?? "").trim() || normalizedTemplateVariables?.subject || ""
   if (!subject) {
     return NextResponse.json({ error: "Subject is required" }, { status: 422 })
+  }
+
+  if (!resolvedHtml) {
+    return NextResponse.json({ error: "HTML content is required" }, { status: 422 })
   }
 
   const recipientEmails = (body.recipientEmails ?? []).filter(
@@ -87,7 +106,7 @@ export async function POST(request: Request) {
     userId: session.user.id,
     userPlan: session.user.plan,
     subject,
-    html: body.html,
+    html: resolvedHtml,
     text: body.text,
     from: body.from,
     smtpConfig,

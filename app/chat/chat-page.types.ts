@@ -34,10 +34,21 @@ export type EditorThemeState = {
   dishTwoImage: string
 }
 
+export type ChatAttachment = {
+  id: string
+  file: File
+  type: "image" | "document" | "csv"
+  previewUrl?: string
+  name: string
+}
+
 export type Message = ChatMessageSeed & {
   validationStats?: ValidationStats
   templateSuggestionIds?: string[]
   campaignId?: string
+  generatedHtml?: string
+  generatedSubject?: string
+  attachments?: ChatAttachment[]
 }
 
 export type EditorChatMessage = {
@@ -96,13 +107,13 @@ export const modelChoices: ModelChoice[] = [
 ]
 
 export const specificModelOptions: SpecificModelOption[] = [
-  { id: "fast-gemini-15-flash", label: "Gemini 1.5 Flash", mode: "fast" },
   { id: "fast-gemini-2-flash", label: "Gemini 2.0 Flash", mode: "fast" },
-  { id: "fast-openrouter-gpt35", label: "GPT-3.5 Turbo", mode: "fast" },
-  { id: "fast-openrouter-claude-haiku", label: "Claude Haiku", mode: "fast" },
-  { id: "boost-gemini-pro", label: "Gemini 2.0 Pro", mode: "boost" },
+  { id: "fast-gemini-15-flash", label: "Gemini 1.5 Flash", mode: "fast" },
+  { id: "fast-openrouter-gpt4o-mini", label: "GPT-4o Mini", mode: "fast" },
+  { id: "fast-openrouter-claude-haiku", label: "Claude 3.5 Haiku", mode: "fast" },
+  { id: "boost-gemini-pro", label: "Gemini 2.5 Flash", mode: "boost" },
   { id: "boost-openrouter-gpt4o", label: "GPT-4o", mode: "boost" },
-  { id: "boost-openrouter-claude-sonnet", label: "Claude 3.5 Sonnet", mode: "boost" },
-  { id: "max-gemini-25-flash", label: "Gemini 2.5 Flash", mode: "max" },
-  { id: "max-openrouter-claude-opus", label: "Claude 3 Opus", mode: "max" },
+  { id: "boost-openrouter-claude-sonnet", label: "Claude Sonnet 4", mode: "boost" },
+  { id: "max-gemini-25-pro", label: "Gemini 2.5 Pro", mode: "max" },
+  { id: "max-openrouter-claude-opus", label: "Claude Sonnet 4", mode: "max" },
 ]

@@ -24,6 +24,7 @@ export const sidebarItems: WorkspaceNavSeed<SidebarTab>[] = [
   { id: "chat", label: "New chat", icon: "filePenLine" },
   { id: "templates", label: "Templates", icon: "fileText" },
   { id: "campaigns", label: "Campaigns", icon: "sparkles" },
+  { id: "settings", label: "Settings", icon: "users" },
 ]
 
 export const settingsSidebarItems: WorkspaceNavSeed<SettingsSection | "pricing" | "checkout">[] = [

@@ -1,5 +1,5 @@
 export type ChatMessageSeed = {
-  id: number
+  id: string | number
   role: "bot" | "user"
   text: string
   kind?: "suggestions" | "templateReview" | "emailRequest" | "validation"

@@ -77,7 +77,7 @@ type ProviderSelectionActive = {
 const DEFAULT_PRIORITY: AiProviderName[] = ["gemini", "openrouter", "openai", "anthropic"]
 const ONBOARDING_FREE_PLANS = new Set(["starter", "free", "trial"])
 const DEFAULT_FREE_DAILY_PER_USER = 20
-const DEFAULT_MAX_OUTPUT_TOKENS = 640
+const DEFAULT_MAX_OUTPUT_TOKENS = 2048
 const DEFAULT_FREE_WEIGHTS: Record<AiProviderName, number> = {
   gemini: 1.5,
   openrouter: 1.25,
@@ -243,6 +243,28 @@ function shouldUseOnboardingPool(userPlan?: string): boolean {
   return planPool.has(plan)
 }
 
+/**
+ * Resolve the correct model for a given provider config.
+ * input.model may be from a different provider (e.g. gemini-2.0-flash when falling back to openrouter).
+ * Only use input.model if it looks like it belongs to this provider.
+ */
+function resolveModelForProvider(config: ProviderConfig, inputModel?: string): string {
+  if (!inputModel) return config.model
+
+  const providerModelPrefixes: Record<AiProviderName, string[]> = {
+    gemini: ["gemini-"],
+    openrouter: ["openai/", "anthropic/", "google/", "meta-llama/", "mistralai/", "deepseek/"],
+    openai: ["gpt-", "o1-", "o3-", "chatgpt-"],
+    anthropic: ["claude-"],
+  }
+
+  const prefixes = providerModelPrefixes[config.provider] ?? []
+  const modelLower = inputModel.toLowerCase()
+  const belongsToProvider = prefixes.some((prefix) => modelLower.startsWith(prefix))
+
+  return belongsToProvider ? inputModel : config.model
+}
+
 function isLikelyLocalBaseUrl(url: string) {
   try {
     const parsed = new URL(url)
@@ -260,7 +282,7 @@ function buildProviderConfigs(): ProviderConfig[] {
     providers.push({
       provider: "gemini",
       apiKey: process.env.GEMINI_API_KEY,
-      model: process.env.GEMINI_MODEL ?? "gemini-1.5-flash",
+      model: process.env.GEMINI_MODEL ?? "gemini-2.0-flash",
       baseUrl: (process.env.GEMINI_BASE_URL ?? "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, ""),
     })
   }
@@ -275,7 +297,7 @@ function buildProviderConfigs(): ProviderConfig[] {
     providers.push({
       provider: "openrouter",
       apiKey: process.env.OPENROUTER_API_KEY,
-      model: process.env.OPENROUTER_MODEL ?? "openai/gpt-3.5-turbo",
+      model: process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini",
       baseUrl: (process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1").replace(/\/$/, ""),
       headers,
     })
@@ -496,7 +518,7 @@ async function generateWithOpenAiCompatible(
       ...(config.headers ?? {}),
     },
     body: JSON.stringify({
-      model: input.model ?? config.model,
+      model: resolveModelForProvider(config, input.model),
       temperature: input.temperature ?? 0.4,
       max_tokens: maxOutputTokens,
       messages: [
@@ -535,7 +557,7 @@ async function generateWithOpenAiCompatible(
 
   return {
     text: clampedText,
-    model: input.model ?? config.model,
+    model: resolveModelForProvider(config, input.model),
     provider: config.provider,
   }
 }
@@ -551,7 +573,7 @@ async function generateWithAnthropic(config: ProviderConfig, input: GenerateAiTe
       ...(config.apiKey ? { "x-api-key": config.apiKey } : {}),
     },
     body: JSON.stringify({
-      model: input.model ?? config.model,
+      model: resolveModelForProvider(config, input.model),
       max_tokens: Math.max(64, Math.min(maxOutputTokens, anthropicMaxTokens)),
       temperature: input.temperature ?? 0.4,
       system: input.system,
@@ -582,7 +604,7 @@ async function generateWithAnthropic(config: ProviderConfig, input: GenerateAiTe
 
   return {
     text: clampedText,
-    model: input.model ?? config.model,
+    model: resolveModelForProvider(config, input.model),
     provider: config.provider,
   }
 }
@@ -597,7 +619,7 @@ async function* generateWithOpenAiCompatibleStream(config: ProviderConfig, input
       ...(config.headers ?? {}),
     },
     body: JSON.stringify({
-      model: input.model ?? config.model,
+      model: resolveModelForProvider(config, input.model),
       temperature: input.temperature ?? 0.4,
       max_tokens: maxOutputTokens,
       stream: true,
@@ -658,7 +680,7 @@ async function* generateWithAnthropicStream(config: ProviderConfig, input: Gener
       ...(config.apiKey ? { "x-api-key": config.apiKey } : {}),
     },
     body: JSON.stringify({
-      model: input.model ?? config.model,
+      model: resolveModelForProvider(config, input.model),
       max_tokens: Math.max(64, Math.min(maxOutputTokens, anthropicMaxTokens)),
       temperature: input.temperature ?? 0.4,
       stream: true,
