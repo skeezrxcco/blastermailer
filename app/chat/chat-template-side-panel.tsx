@@ -8,9 +8,9 @@ import { cn } from "@/lib/utils"
 type Viewport = "desktop" | "tablet" | "mobile"
 
 const viewportWidths: Record<Viewport, number> = {
-  desktop: 680,
-  tablet: 560,
-  mobile: 390,
+  desktop: 860,
+  tablet: 700,
+  mobile: 430,
 }
 
 export function TemplateSidePanel({
@@ -48,20 +48,21 @@ export function TemplateSidePanel({
         srcDoc={html}
         title={subject ? `${subject} preview` : "Template preview"}
         className={cn(
-          "bg-white",
+          "border-0 bg-transparent",
           disablePreviewInteraction && !isFullscreenMode ? "pointer-events-none" : "",
-          isFullscreenMode
-            ? "h-[calc(100vh-160px)] shadow-2xl shadow-black/30"
-            : "h-full w-full max-w-[760px]",
+          isFullscreenMode ? "h-[calc(100vh-110px)] max-w-full" : "h-full w-full",
         )}
-        style={{ width: isFullscreenMode ? iframeWidth : "100%", maxWidth: "100%" }}
+        style={{
+          width: isFullscreenMode ? iframeWidth : "100%",
+          maxWidth: "100%",
+        }}
         sandbox="allow-same-origin"
       />
     )
   }
 
   const fullscreenOverlay = (
-    <div className="fixed inset-0 z-[150] bg-zinc-900/97">
+    <div className="fixed inset-0 z-[200] bg-zinc-950">
       <div className="absolute right-4 top-4 z-10 flex items-center gap-1 rounded-md border border-zinc-700/70 bg-zinc-900/95 p-1.5">
         {([
           { id: "desktop" as Viewport, icon: Monitor },
@@ -92,10 +93,8 @@ export function TemplateSidePanel({
           <X className="h-4 w-4" />
         </button>
       </div>
-      <div className="scrollbar-hide flex h-full w-full items-start justify-center overflow-y-auto overflow-x-hidden px-6 pb-8 pt-16 md:px-10 md:pt-20">
-        <div className="flex w-full justify-center overflow-x-auto">
-          {renderPreviewFrame("fullscreen")}
-        </div>
+      <div className="scrollbar-hide flex h-full w-full items-start justify-center overflow-y-auto overflow-x-hidden px-3 pb-6 pt-12 md:px-6 md:pt-14">
+        {renderPreviewFrame("fullscreen")}
       </div>
     </div>
   )
@@ -108,7 +107,7 @@ export function TemplateSidePanel({
       )}
     >
       <div className="relative min-h-0 flex-1 bg-zinc-200">
-        <div className="flex h-full items-stretch justify-center px-4 py-4">
+        <div className="flex h-full items-stretch justify-center">
           {renderPreviewFrame("split")}
         </div>
         <div className="pointer-events-none absolute inset-0">

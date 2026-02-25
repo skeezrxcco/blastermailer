@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { FileSpreadsheet, FileText, ImageIcon, Plus, X } from "lucide-react"
+import { gsap } from "gsap"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -40,6 +41,7 @@ export function ChatComposerBar({
   pendingAttachments,
   onRemoveAttachment,
   availableModes,
+  highlightUploadAction = false,
 }: {
   prompt: string
   onPromptChange: (value: string) => void
@@ -57,8 +59,10 @@ export function ChatComposerBar({
   pendingAttachments?: ChatAttachment[]
   onRemoveAttachment?: (id: string) => void
   availableModes: AvailableMode[]
+  highlightUploadAction?: boolean
 }) {
   const router = useRouter()
+  const composerRootRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const csvInputRef = useRef<HTMLInputElement | null>(null)
   const docInputRef = useRef<HTMLInputElement | null>(null)
@@ -86,21 +90,65 @@ export function ChatComposerBar({
     resizeTextarea()
   }, [prompt])
 
+  useEffect(() => {
+    if (!highlightUploadAction || !canUpload) return
+    const root = composerRootRef.current
+    if (!root) return
+
+    const ctx = gsap.context(() => {
+      const rings = gsap.utils.toArray<HTMLElement>(".bm-upload-ring")
+      const buttons = gsap.utils.toArray<HTMLElement>(".bm-upload-btn")
+      if (!rings.length || !buttons.length) return
+
+      gsap.set(rings, { transformOrigin: "50% 50%", scale: 1, opacity: 0.72 })
+      gsap.to(rings, {
+        scale: 1.9,
+        opacity: 0,
+        duration: 1.4,
+        ease: "power1.out",
+        repeat: -1,
+        stagger: 0.34,
+      })
+
+      gsap.to(buttons, {
+        boxShadow: "0 0 0 2px rgba(56,189,248,0.42)",
+        duration: 0.85,
+        ease: "sine.inOut",
+        repeat: -1,
+        yoyo: true,
+      })
+    }, root)
+
+    return () => ctx.revert()
+  }, [highlightUploadAction, canUpload, isComposerStacked])
+
   const renderUploadButton = (disabled: boolean) => (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          disabled={disabled}
-          className={cn(
-            "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition",
-            !disabled ? "bg-zinc-950 text-zinc-100 hover:bg-zinc-900" : "cursor-not-allowed bg-zinc-950/55 text-zinc-600",
-          )}
-          aria-label="Upload file"
-        >
-          <Plus className="h-4 w-4" />
-        </button>
-      </DropdownMenuTrigger>
+      <div className="relative inline-flex">
+        {highlightUploadAction && !disabled ? (
+          <>
+            <span aria-hidden className="bm-upload-ring pointer-events-none absolute inset-0 rounded-full border border-sky-300/70" />
+            <span aria-hidden className="bm-upload-ring pointer-events-none absolute inset-0 rounded-full border border-sky-400/45" />
+          </>
+        ) : null}
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            disabled={disabled}
+            className={cn(
+              "bm-upload-btn relative z-10 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition",
+              !disabled
+                ? highlightUploadAction
+                  ? "bg-zinc-900 text-sky-200 ring-1 ring-sky-300/55 hover:bg-zinc-800"
+                  : "bg-zinc-950 text-zinc-100 hover:bg-zinc-900"
+                : "cursor-not-allowed bg-zinc-950/55 text-zinc-600",
+            )}
+            aria-label="Upload file"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+        </DropdownMenuTrigger>
+      </div>
       <DropdownMenuContent align="start" side="top" sideOffset={8} className="w-44 border-zinc-800 bg-zinc-950 p-1">
         <DropdownMenuItem className="gap-2 rounded-md text-xs text-zinc-300 focus:bg-zinc-800/60 focus:text-zinc-100" onClick={() => csvInputRef.current?.click()}>
           <FileSpreadsheet className="h-3.5 w-3.5 text-zinc-500" />
@@ -142,6 +190,7 @@ export function ChatComposerBar({
 
   return (
     <div
+      ref={composerRootRef}
       className={cn(
         "rounded-2xl bg-zinc-900/55 px-3 py-2 shadow-lg ring-1 ring-zinc-700/40 backdrop-blur-xl",
         showHero ? "w-full max-w-4xl" : "",
@@ -206,6 +255,11 @@ export function ChatComposerBar({
           </>
         ) : null}
       </div>
+      {composerMode === "emails" ? (
+        <p className="mt-1.5 text-[11px] text-zinc-400">
+          Add recipients: click <span className="text-zinc-200">+</span> for CSV, or paste emails in chat.
+        </p>
+      ) : null}
       {/* Stacked row: upload left, model+upgrade right — animated */}
       <div
         className={cn(

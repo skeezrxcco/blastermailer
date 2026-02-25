@@ -42,7 +42,7 @@ function ResizableHandle({
     <ResizableSeparator
       data-slot="resizable-handle"
       className={cn(
-        'bg-border focus-visible:ring-ring relative z-30 flex h-full w-2 shrink-0 cursor-col-resize items-center justify-center after:absolute after:inset-y-0 after:left-1/2 after:w-4 after:-translate-x-1/2 focus-visible:ring-1 focus-visible:ring-offset-1 focus-visible:outline-none aria-[orientation=horizontal]:h-2 aria-[orientation=horizontal]:w-full aria-[orientation=horizontal]:cursor-row-resize aria-[orientation=horizontal]:after:inset-x-0 aria-[orientation=horizontal]:after:top-1/2 aria-[orientation=horizontal]:after:h-4 aria-[orientation=horizontal]:after:w-full aria-[orientation=horizontal]:after:-translate-y-1/2 aria-[orientation=horizontal]:after:translate-x-0 [&[aria-orientation=horizontal]>div]:rotate-90',
+        'bg-border focus-visible:ring-ring relative z-30 flex h-full w-2 shrink-0 cursor-col-resize items-center justify-center after:absolute after:inset-y-0 after:left-1/2 after:w-4 after:-translate-x-1/2 focus-visible:ring-1 focus-visible:ring-offset-1 focus-visible:outline-none aria-[orientation=vertical]:h-2 aria-[orientation=vertical]:w-full aria-[orientation=vertical]:cursor-row-resize aria-[orientation=vertical]:after:inset-x-0 aria-[orientation=vertical]:after:top-1/2 aria-[orientation=vertical]:after:h-4 aria-[orientation=vertical]:after:w-full aria-[orientation=vertical]:after:-translate-y-1/2 aria-[orientation=vertical]:after:translate-x-0 [&[aria-orientation=vertical]>div]:rotate-90',
         className,
       )}
       {...props}

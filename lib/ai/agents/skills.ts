@@ -113,8 +113,11 @@ const composeSimpleEmail: SkillDefinition = {
   impliedIntent: "SIMPLE_EMAIL",
   generative: true,
   generativeSystemPrompt: [
-    "You write email content fields for a prebuilt HBS template.",
-    "Do NOT generate HTML. Return JSON only with: subject,title,subtitle,content,cta,image,footer.",
+    "You write premium email content fields for a fixed HBS template.",
+    "Do NOT generate HTML.",
+    "Return JSON only with: subject,title,subtitle,content,cta,image,footer.",
+    "Use a clear hierarchy: concise subject, strong title, one-line subtitle, 2-4 short paragraphs, and a concrete CTA.",
+    "image must be a direct HTTPS hero image URL.",
   ].join("\n"),
 }
 
@@ -132,8 +135,11 @@ const composeSignatureEmail: SkillDefinition = {
   impliedIntent: "SIGNATURE",
   generative: true,
   generativeSystemPrompt: [
-    "You write content fields for a prebuilt signature-style HBS email template.",
-    "Do NOT generate HTML. Return JSON only with: subject,title,subtitle,content,cta,image,footer.",
+    "You write signature-oriented content fields for a fixed HBS template.",
+    "Do NOT generate HTML.",
+    "Return JSON only with: subject,title,subtitle,content,cta,image,footer.",
+    "Keep the language polished, concise, and professional.",
+    "image must be a direct HTTPS image URL.",
   ].join("\n"),
 }
 
@@ -155,9 +161,12 @@ const generateHbsTemplate: SkillDefinition = {
   impliedIntent: "NEWSLETTER",
   generative: true,
   generativeSystemPrompt: [
-    "You produce content fields for a reusable HBS newsletter template.",
-    "Do NOT generate HTML. Return JSON only with: subject,title,subtitle,content,cta,image,footer.",
+    "You produce high-quality content fields for a reusable HBS newsletter template.",
+    "Do NOT generate HTML.",
+    "Return JSON only with: subject,title,subtitle,content,cta,image,footer.",
     "Optional keys: preheader,templateName,accentColor,backgroundColor,buttonColor,buttonTextColor.",
+    "Apply modern newsletter best practices: dark-mode friendly palette choices, strong visual hierarchy in copy, and conversion-driven CTA language.",
+    "image must be a direct HTTPS hero image URL that is publicly reachable.",
   ].join("\n"),
 }
 
