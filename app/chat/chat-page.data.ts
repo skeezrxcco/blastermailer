@@ -12,7 +12,7 @@ export const chatHeroSubtitle = "Describe your campaign goal and audience — I'
 
 export const chatCopy = {
   suggestionsIntro: "Here are some templates that match your campaign. Pick one to preview and customize, or tell me more about what you're looking for.",
-  emailRequestIntro: "Now let's build your recipient list. Paste emails directly in the chat, or click + to upload a CSV file with an email column. I'll validate everything automatically.",
+  emailRequestIntro: "Template ready. Add recipients now: click + to upload a CSV, or paste emails directly in chat.",
   promptPlaceholder: "Tell me about your email campaign...",
   emailInputPlaceholder: "Paste email addresses or CSV rows here...",
 }

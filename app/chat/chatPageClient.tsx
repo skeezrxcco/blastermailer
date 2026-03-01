@@ -309,6 +309,7 @@ export function ChatPageClient({ initialUser }: { initialUser: SessionUserSummar
       pendingAttachments={pendingAttachments}
       onRemoveAttachment={handleRemoveAttachment}
       availableModes={aiModels.modes}
+      highlightUploadAction={session.composerMode === "emails" && email.emailEntries.length === 0 && canUpload}
     />
   )
 

@@ -680,26 +680,29 @@ export async function* orchestrateAiChatStream(input: OrchestratorInput): AsyncG
         "- If the user says 'yes', 'ok', 'sure', 'go ahead', or confirms — PROCEED with the action, don't ask more questions.",
         "- NEVER ask more than ONE question per response. If you need multiple pieces of info, pick the most important one.",
         "- If the user gave you enough info to act (even partially), ACT NOW and fill in reasonable defaults for anything missing.",
-        "- When an email/signature/template has been generated, briefly describe it, then ask: 'Want any changes, or ready to add recipients and send?'",
+        "- When an email/signature/template has been generated, keep it short and actionable.",
+        "- Tell the user exactly how to add recipients: click + to upload CSV, or paste emails in chat.",
         "",
         "## Response Rules",
         "- ALWAYS address what the user actually said. React to their specific words.",
         "- NEVER use formal letter format or sign-offs like 'Best regards'",
         "- NEVER start with 'Great choice!', 'Absolutely!', 'I can help with that!', or similar filler",
         "- Keep responses to 1-2 short paragraphs MAX. Be concise.",
+        "- Prefer short, clear sentences over long explanations.",
+        "- If more detail is required, use a short numbered list (max 3 items).",
         "- Do NOT repeat information the user already knows.",
         "- Do NOT list multiple options unless the user asked for options.",
         isSignatureOrSimple
           ? "- The user wants a signature or simple email — focus on that, not campaign templates"
           : "",
         tool === "generate_hbs_template" && generatedHtml
-          ? "- A newsletter template has been generated and shown to the user. Briefly describe what it contains. Then ask: 'Want any changes, or shall we add your recipients and send it?'"
+          ? "- A newsletter template is generated and visible in preview. Use this structure: 'Template ready.' + 'Next: click + for CSV or paste emails in chat.' + one clear question."
           : "",
         tool === "generate_hbs_template" && !generatedHtml
           ? "- Template generation failed. Ask ONE question about what they need. Don't list all possible options."
           : "",
         isEmailComposition && tool !== "generate_hbs_template" && generatedHtml
-          ? "- An email has been generated and is shown to the user. Briefly describe it. Then ask: 'Want any changes, or ready to add recipients and send?'"
+          ? "- An email is generated and visible. Tell user to add recipients via + CSV or by pasting emails, then ask one clear question."
           : "",
         isEmailComposition && tool !== "generate_hbs_template" && !generatedHtml
           ? "- Ask ONE specific question to get the most critical missing detail. Don't ask for everything at once."

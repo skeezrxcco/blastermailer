@@ -93,7 +93,7 @@ export function TemplateSidePanel({
           <X className="h-4 w-4" />
         </button>
       </div>
-      <div className="scrollbar-hide flex h-full w-full items-start justify-center overflow-y-auto overflow-x-hidden px-3 pb-6 pt-12 md:px-6 md:pt-14">
+      <div className="scrollbar-hide flex h-full w-full items-center justify-center overflow-y-auto overflow-x-hidden px-3 py-6 md:px-6 md:py-8">
         {renderPreviewFrame("fullscreen")}
       </div>
     </div>
