@@ -28,6 +28,7 @@ import { PartyPopperIcon } from "@/components/ui/party-popper"
 import { RocketIcon } from "@/components/ui/rocket"
 import { SparklesIcon } from "@/components/ui/sparkles"
 import { UsersIcon } from "@/components/ui/users"
+import { SettingsIcon } from "@/components/ui/settings"
 import {
   settingsSectionFromParam,
   settingsSidebarItems,
@@ -60,6 +61,7 @@ const iconByKey: Record<WorkspaceIconKey, AppIcon> = {
   filePenLine: FilePenLineIcon,
   fileText: FileTextIcon,
   users: UsersIcon,
+  settings: SettingsIcon,
   rocket: RocketIcon,
   sparkles: SparklesIcon,
   circleCheck: CircleCheckIcon,

@@ -6,16 +6,16 @@ import { forwardRef, useCallback, useImperativeHandle, useRef } from "react";
 
 import { cn } from "@/lib/utils";
 
-export interface CogIconHandle {
+export interface SettingsIconHandle {
   startAnimation: () => void;
   stopAnimation: () => void;
 }
 
-interface CogIconProps extends HTMLAttributes<HTMLDivElement> {
+interface SettingsIconProps extends HTMLAttributes<HTMLDivElement> {
   size?: number;
 }
 
-const CogIcon = forwardRef<CogIconHandle, CogIconProps>(
+const SettingsIcon = forwardRef<SettingsIconHandle, SettingsIconProps>(
   ({ onMouseEnter, onMouseLeave, className, size = 28, ...props }, ref) => {
     const controls = useAnimation();
     const isControlledRef = useRef(false);
@@ -50,6 +50,7 @@ const CogIcon = forwardRef<CogIconHandle, CogIconProps>(
       },
       [controls, onMouseLeave]
     );
+
     return (
       <div
         className={cn(className)}
@@ -68,37 +69,24 @@ const CogIcon = forwardRef<CogIconHandle, CogIconProps>(
           transition={{ type: "spring", stiffness: 50, damping: 10 }}
           variants={{
             normal: {
-              scale: 1,
+              rotate: 0,
             },
             animate: {
-              scale: [1, 1.06, 1],
-              transition: { duration: 0.4, ease: "easeInOut" },
+              rotate: 180,
             },
           }}
           viewBox="0 0 24 24"
           width={size}
           xmlns="http://www.w3.org/2000/svg"
         >
-          <path d="M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z" />
-          <path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
-          <path d="M12 2v2" />
-          <path d="M12 22v-2" />
-          <path d="m17 20.66-1-1.73" />
-          <path d="M11 10.27 7 3.34" />
-          <path d="m20.66 17-1.73-1" />
-          <path d="m3.34 7 1.73 1" />
-          <path d="M14 12h8" />
-          <path d="M2 12h2" />
-          <path d="m20.66 7-1.73 1" />
-          <path d="m3.34 17 1.73-1" />
-          <path d="m17 3.34-1 1.73" />
-          <path d="m11 13.73-4 6.93" />
+          <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+          <circle cx="12" cy="12" r="3" />
         </motion.svg>
       </div>
     );
   }
 );
 
-CogIcon.displayName = "CogIcon";
+SettingsIcon.displayName = "SettingsIcon";
 
-export { CogIcon };
+export { SettingsIcon };

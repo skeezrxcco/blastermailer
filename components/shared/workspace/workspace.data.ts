@@ -1,4 +1,5 @@
 import type { SidebarTab } from "@/hooks/use-workspace-tab"
+import { featureFlags } from "@/lib/feature-flags"
 
 export type SettingsSection = "profile" | "plan" | "usage" | "referals"
 
@@ -6,13 +7,14 @@ export type WorkspaceIconKey =
   | "bot"
   | "filePenLine"
   | "fileText"
-  | "users"
   | "rocket"
   | "sparkles"
   | "circleCheck"
   | "partyPopper"
   | "handCoins"
   | "idCard"
+  | "settings"
+  | "users"
 
 export type WorkspaceNavSeed<TId extends string> = {
   id: TId
@@ -20,12 +22,18 @@ export type WorkspaceNavSeed<TId extends string> = {
   icon: WorkspaceIconKey
 }
 
-export const sidebarItems: WorkspaceNavSeed<SidebarTab>[] = [
-  { id: "chat", label: "New chat", icon: "filePenLine" },
-  { id: "templates", label: "Templates", icon: "fileText" },
-  { id: "campaigns", label: "Campaigns", icon: "sparkles" },
-  { id: "settings", label: "Settings", icon: "users" },
-]
+export const sidebarItems: WorkspaceNavSeed<SidebarTab>[] = featureFlags.campaignsPage
+  ? [
+      { id: "chat", label: "New chat", icon: "filePenLine" },
+      { id: "templates", label: "Templates", icon: "fileText" },
+      { id: "campaigns", label: "Campaigns", icon: "sparkles" },
+      { id: "settings", label: "Settings", icon: "settings" },
+    ]
+  : [
+      { id: "chat", label: "New chat", icon: "filePenLine" },
+      { id: "templates", label: "Templates", icon: "fileText" },
+      { id: "settings", label: "Settings", icon: "settings" },
+    ]
 
 export const settingsSidebarItems: WorkspaceNavSeed<SettingsSection | "pricing" | "checkout">[] = [
   { id: "profile", label: "Profile", icon: "users" },
