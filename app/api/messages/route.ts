@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth"
 import { MessageRole } from "@prisma/client"
 
 import { authOptions } from "@/lib/auth"
-import { createMessage, listMessages } from "@/lib/messaging"
+import { createMessage, listMessages, listMessagesByConversation } from "@/lib/messaging"
 
 export async function GET(request: Request) {
   const session = await getServerSession(authOptions)
@@ -13,7 +13,21 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url)
   const channel = searchParams.get("channel") ?? "chat"
-  const limit = Number(searchParams.get("limit") ?? "50")
+  const conversationId = searchParams.get("conversationId")
+  const limit = Number(searchParams.get("limit") ?? "200")
+
+  if (conversationId) {
+    const messages = await listMessagesByConversation({
+      userId: session.user.id,
+      conversationId,
+      limit,
+    })
+    return NextResponse.json({ messages })
+  }
+
+  if (channel === "ai") {
+    return NextResponse.json({ error: "AI transcripts are not persisted." }, { status: 403 })
+  }
 
   const messages = await listMessages({
     userId: session.user.id,
@@ -41,6 +55,9 @@ export async function POST(request: Request) {
   const roleInput = String(body.role ?? "USER").toUpperCase()
   const role = roleInput in MessageRole ? (MessageRole[roleInput as keyof typeof MessageRole] as MessageRole) : MessageRole.USER
   const content = String(body.content ?? "").trim()
+  if ((body.channel ?? "chat") === "ai") {
+    return NextResponse.json({ error: "AI transcripts are not persisted." }, { status: 403 })
+  }
 
   if (!content) {
     return NextResponse.json({ error: "Message content is required" }, { status: 422 })

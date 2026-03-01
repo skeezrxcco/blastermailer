@@ -4,6 +4,7 @@ export type SettingsSection = "profile" | "plan" | "usage" | "referals"
 
 export type WorkspaceIconKey =
   | "bot"
+  | "filePenLine"
   | "fileText"
   | "users"
   | "rocket"
@@ -20,11 +21,10 @@ export type WorkspaceNavSeed<TId extends string> = {
 }
 
 export const sidebarItems: WorkspaceNavSeed<SidebarTab>[] = [
-  { id: "chat", label: "Chat", icon: "bot" },
+  { id: "chat", label: "New chat", icon: "filePenLine" },
   { id: "templates", label: "Templates", icon: "fileText" },
-  { id: "contacts", label: "Contacts", icon: "users" },
-  { id: "activity", label: "Activity", icon: "rocket" },
   { id: "campaigns", label: "Campaigns", icon: "sparkles" },
+  { id: "settings", label: "Settings", icon: "users" },
 ]
 
 export const settingsSidebarItems: WorkspaceNavSeed<SettingsSection | "pricing" | "checkout">[] = [
