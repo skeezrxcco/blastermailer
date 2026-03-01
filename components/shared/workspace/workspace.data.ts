@@ -22,18 +22,12 @@ export type WorkspaceNavSeed<TId extends string> = {
   icon: WorkspaceIconKey
 }
 
-export const sidebarItems: WorkspaceNavSeed<SidebarTab>[] = featureFlags.campaignsPage
-  ? [
-      { id: "chat", label: "New chat", icon: "filePenLine" },
-      { id: "templates", label: "Templates", icon: "fileText" },
-      { id: "campaigns", label: "Campaigns", icon: "sparkles" },
-      { id: "settings", label: "Settings", icon: "settings" },
-    ]
-  : [
-      { id: "chat", label: "New chat", icon: "filePenLine" },
-      { id: "templates", label: "Templates", icon: "fileText" },
-      { id: "settings", label: "Settings", icon: "settings" },
-    ]
+export const sidebarItems: WorkspaceNavSeed<SidebarTab>[] = [
+  { id: "chat", label: "New chat", icon: "filePenLine" },
+  ...(featureFlags.templatesPage ? [{ id: "templates", label: "Templates", icon: "fileText" } as const] : []),
+  ...(featureFlags.campaignsPage ? [{ id: "campaigns", label: "Campaigns", icon: "sparkles" } as const] : []),
+  { id: "settings", label: "Settings", icon: "settings" },
+]
 
 export const settingsSidebarItems: WorkspaceNavSeed<SettingsSection | "pricing" | "checkout">[] = [
   { id: "profile", label: "Profile", icon: "users" },

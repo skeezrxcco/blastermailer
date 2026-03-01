@@ -6,7 +6,7 @@ export type SidebarTab = "chat" | "templates" | "contacts" | "activity" | "campa
 
 export const tabRoutes: Record<SidebarTab, string> = {
   chat: "/chat",
-  templates: "/templates",
+  templates: featureFlags.templatesPage ? "/templates" : "/chat",
   contacts: "/contacts",
   activity: "/activity",
   campaigns: featureFlags.campaignsPage ? "/campaigns" : "/chat",
@@ -16,7 +16,7 @@ export const tabRoutes: Record<SidebarTab, string> = {
 }
 
 export function tabFromPathname(pathname: string): SidebarTab {
-  if (pathname.startsWith("/templates")) return "templates"
+  if (pathname.startsWith("/templates")) return featureFlags.templatesPage ? "templates" : "chat"
   if (pathname.startsWith("/contacts")) return "contacts"
   if (pathname.startsWith("/activity")) return "activity"
   if (pathname.startsWith("/campaigns")) return featureFlags.campaignsPage ? "campaigns" : "chat"
